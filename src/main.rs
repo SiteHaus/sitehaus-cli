@@ -5,7 +5,7 @@ mod ssh;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use commands::{db::DbCommand, server::ServerCommand};
+use commands::{db::DbCommand, ops::OpsCommand, server::ServerCommand};
 
 #[derive(Parser)]
 #[command(name = "sitehaus", version, about = "SiteHaus server management CLI")]
@@ -37,6 +37,15 @@ enum Command {
         #[command(subcommand)]
         cmd: DbCommand,
     },
+    /// Stream service logs
+    Logs {
+        /// Service name: gateway, commerce, payments, worker, caddy, postgres, redis
+        service: Option<String>,
+    },
+    /// Check the server health endpoint
+    Health,
+    /// Pull latest images and restart all services
+    Deploy,
 }
 
 fn main() -> Result<()> {
@@ -70,6 +79,12 @@ fn main() -> Result<()> {
         }
 
         Command::Db { cmd } => commands::db::run(cmd, server_override)?,
+
+        Command::Logs { service } => {
+            commands::ops::run(&OpsCommand::Logs { service: service.clone() }, server_override)?
+        }
+        Command::Health => commands::ops::run(&OpsCommand::Health, server_override)?,
+        Command::Deploy => commands::ops::run(&OpsCommand::Deploy, server_override)?,
     }
 
     Ok(())
