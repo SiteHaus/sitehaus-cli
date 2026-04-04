@@ -1,6 +1,8 @@
 use crate::config::{ServerConfig, ServerType, read_config, write_config};
+use crate::theme;
 use anyhow::Result;
 use clap::Subcommand;
+use tabled::{Table, Tabled, settings::{Style, object::Columns, Modify, Alignment}};
 
 #[derive(Subcommand)]
 pub enum ServerCommand {
@@ -65,7 +67,7 @@ pub fn run(cmd: &ServerCommand) -> Result<()> {
                 },
             );
             write_config(&config)?;
-            println!("✓  Server \"{name}\" registered.");
+            theme::success(&format!("Server \"{}\" registered.", theme::yellow(name)));
         }
 
         ServerCommand::List => {
@@ -74,20 +76,49 @@ pub fn run(cmd: &ServerCommand) -> Result<()> {
                 println!("No servers registered. Run: sitehaus server add");
                 return Ok(());
             }
-            for (name, s) in &config.servers {
-                let active = config.active_server.as_deref() == Some(name.as_str());
-                let marker = if active { "▶" } else { " " };
-                println!(
-                    "  {marker} {name}  ({})  {}@{}  {}",
-                    match s.server_type {
-                        ServerType::Ecom => "ecom",
-                        ServerType::Platform => "platform",
-                    },
-                    s.ssh_user,
-                    s.host,
-                    s.health_url
-                );
+
+            #[derive(Tabled)]
+            struct Row {
+                #[tabled(rename = " ")]
+                active: String,
+                #[tabled(rename = "Name")]
+                name: String,
+                #[tabled(rename = "Type")]
+                server_type: String,
+                #[tabled(rename = "Host")]
+                host: String,
+                #[tabled(rename = "User")]
+                ssh_user: String,
             }
+
+            let mut rows: Vec<Row> = config.servers.iter().map(|(name, s)| {
+                let is_active = config.active_server.as_deref() == Some(name.as_str());
+                Row {
+                    active: if is_active {
+                        format!("{}", theme::yellow("▶"))
+                    } else {
+                        " ".to_string()
+                    },
+                    name: if is_active {
+                        format!("{}", theme::yellow(name))
+                    } else {
+                        name.clone()
+                    },
+                    server_type: match s.server_type {
+                        ServerType::Ecom => "ecom".to_string(),
+                        ServerType::Platform => "platform".to_string(),
+                    },
+                    host: s.host.clone(),
+                    ssh_user: s.ssh_user.clone(),
+                }
+            }).collect();
+            rows.sort_by(|a, b| a.name.cmp(&b.name));
+
+            let table = Table::new(rows)
+                .with(Style::blank())
+                .with(Modify::new(Columns::new(..)).with(Alignment::left()))
+                .to_string();
+            println!("{table}");
         }
 
         ServerCommand::Remove { name } => {
@@ -99,7 +130,7 @@ pub fn run(cmd: &ServerCommand) -> Result<()> {
                 config.active_server = None;
             }
             write_config(&config)?;
-            println!("✓  Server \"{name}\" removed.");
+            theme::success(&format!("Server \"{}\" removed.", theme::yellow(name)));
         }
     }
     Ok(())

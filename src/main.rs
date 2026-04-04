@@ -2,8 +2,10 @@ mod commands;
 mod confirm;
 mod config;
 mod ssh;
+mod theme;
 
 use anyhow::Result;
+use owo_colors::OwoColorize;
 use clap::{Parser, Subcommand};
 use commands::{db::DbCommand, ops::OpsCommand, server::ServerCommand};
 
@@ -60,7 +62,7 @@ fn main() -> Result<()> {
             config::get_server(&config, name)?;
             config.active_server = Some(name.clone());
             config::write_config(&config)?;
-            println!("✓  Active server set to \"{name}\".");
+            theme::success(&format!("Active server set to \"{}\".", theme::yellow(name)));
         }
 
         Command::Status => {
@@ -70,10 +72,12 @@ fn main() -> Result<()> {
                 Some(name) => {
                     let server = config::get_server(&config, name)?;
                     println!(
-                        "Active server: {name}  ({}@{})",
-                        server.ssh_user, server.host
+                        "{}  {}@{}",
+                        theme::yellow(name),
+                        server.ssh_user,
+                        server.host
                     );
-                    println!("Health URL:    {}", server.health_url);
+                    println!("  {}", server.health_url.dimmed());
                 }
             }
         }

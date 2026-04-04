@@ -1,6 +1,7 @@
 use crate::confirm::{confirm, confirm_prod, is_prod};
 use crate::config::{read_config, resolve_server};
 use crate::ssh::ssh_exec;
+use crate::theme;
 use anyhow::Result;
 use clap::Subcommand;
 use std::process::Command;
@@ -24,13 +25,16 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
             if is_prod(name) {
                 confirm_prod(name)?;
             } else {
-                confirm(&format!("Seed database on \"{name}\"? This will wipe and re-insert seed data."))?;
+                confirm(&format!(
+                    "Seed database on \"{}\"? This will wipe and re-insert seed data.",
+                    theme::yellow(name)
+                ))?;
             }
 
-            println!("Seeding database on {name}...");
+            println!("Seeding database on {}...", theme::yellow(name));
             let code = ssh_exec(
                 server,
-                "docker exec sitehaus-commerce-commerce-1 node --experimental-strip-types scripts/seed.ts",
+                "docker exec sitehaus-commerce-commerce-1 npx tsx scripts/seed.ts",
             );
             std::process::exit(code);
         }
@@ -39,10 +43,10 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
             if is_prod(name) {
                 confirm_prod(name)?;
             } else {
-                confirm(&format!("Run migrations on \"{name}\"?"))?;
+                confirm(&format!("Run migrations on \"{}\"?", theme::yellow(name)))?;
             }
 
-            println!("Running migrations on {name}...");
+            println!("Running migrations on {}...", theme::yellow(name));
             let code = ssh_exec(
                 server,
                 r#"docker exec sitehaus-commerce-commerce-1 node -e "require('./packages/database/dist/migrate.js')""#,
@@ -51,8 +55,8 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
         }
 
         DbCommand::Studio => {
-            println!("Opening Drizzle Studio for {name}...");
-            println!("Tunnel: localhost:5435 → {name}:5432");
+            println!("Opening Drizzle Studio for {}...", theme::yellow(name));
+            println!("Tunnel: localhost:5435 → {}:5432", theme::yellow(name));
 
             let mut ssh_args = vec![
                 "-N".to_string(),

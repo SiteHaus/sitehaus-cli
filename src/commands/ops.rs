@@ -1,8 +1,11 @@
 use crate::config::{read_config, resolve_server};
 use crate::confirm::confirm;
 use crate::ssh::ssh_exec;
+use crate::theme;
 use anyhow::Result;
 use clap::Subcommand;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::time::Duration;
 
 #[derive(Subcommand)]
 pub enum OpsCommand {
@@ -43,28 +46,39 @@ pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
         }
 
         OpsCommand::Health => {
-            println!("Checking health for {name}...");
+            let spinner = ProgressBar::new_spinner();
+            spinner.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                    .template("{spinner} {msg}")
+                    .unwrap(),
+            );
+            spinner.set_message(format!("Checking {}...", theme::yellow(name)));
+            spinner.enable_steady_tick(Duration::from_millis(80));
+
             let url = &server.health_url;
             match ureq::get(url).call() {
                 Ok(resp) => {
                     let status = resp.status();
+                    spinner.finish_and_clear();
                     if status == 200 {
-                        println!("✓  {name} is healthy ({status})");
+                        theme::success(&format!("{} is healthy", theme::yellow(name)));
                     } else {
-                        println!("⚠  {name} returned status {status}");
+                        theme::warn(&format!("{} returned status {status}", theme::yellow(name)));
                         std::process::exit(1);
                     }
                 }
                 Err(e) => {
-                    println!("✗  {name} is unreachable: {e}");
+                    spinner.finish_and_clear();
+                    theme::error(&format!("{} is unreachable: {e}", theme::yellow(name)));
                     std::process::exit(1);
                 }
             }
         }
 
         OpsCommand::Deploy => {
-            confirm(&format!("Deploy to \"{name}\"? This will pull latest images and restart all services."))?;
-            println!("Deploying to {name}...");
+            confirm(&format!("Deploy to \"{}\"? This will pull latest images and restart all services.", theme::yellow(name)))?;
+            println!("Deploying to {}...", theme::yellow(name));
             let code = ssh_exec(
                 server,
                 "cd /srv/sitehaus-commerce && docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d --remove-orphans && docker compose -f docker-compose.prod.yml restart caddy && docker image prune -f",
