@@ -39,8 +39,8 @@ pub fn read_config() -> Result<CliConfig> {
     if !path.exists() {
         return Ok(CliConfig::default());
     }
-    let contents = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let contents =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
     let config: CliConfig = serde_yaml::from_str(&contents)
         .with_context(|| format!("failed to parse {}", path.display()))?;
     Ok(config)
@@ -61,7 +61,11 @@ pub fn get_server<'a>(config: &'a CliConfig, name: &str) -> Result<&'a ServerCon
         .with_context(|| format!("unknown server \"{name}\" — run: sitehaus server list"))
 }
 
-pub fn resolve_server<'a>(config: &'a CliConfig, override_name: Option<&'a str>) -> Result<(&'a str, &'a ServerConfig)> {
+#[allow(dead_code)]
+pub fn resolve_server<'a>(
+    config: &'a CliConfig,
+    override_name: Option<&'a str>,
+) -> Result<(&'a str, &'a ServerConfig)> {
     let name = override_name
         .or(config.active_server.as_deref())
         .context("no active server — run: sitehaus use <server>")?;

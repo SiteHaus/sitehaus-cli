@@ -52,7 +52,10 @@ fn main() -> Result<()> {
                 None => println!("No active server. Run: sitehaus use <server>"),
                 Some(name) => {
                     let server = config::get_server(&config, name)?;
-                    println!("Active server: {name}  ({}@{})", server.ssh_user, server.host);
+                    println!(
+                        "Active server: {name}  ({}@{})",
+                        server.ssh_user, server.host
+                    );
                     println!("Health URL:    {}", server.health_url);
                 }
             }

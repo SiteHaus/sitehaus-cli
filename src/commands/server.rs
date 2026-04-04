@@ -1,4 +1,4 @@
-use crate::config::{read_config, write_config, ServerConfig, ServerType};
+use crate::config::{ServerConfig, ServerType, read_config, write_config};
 use anyhow::Result;
 use clap::Subcommand;
 
@@ -77,9 +77,15 @@ pub fn run(cmd: &ServerCommand) -> Result<()> {
             for (name, s) in &config.servers {
                 let active = config.active_server.as_deref() == Some(name.as_str());
                 let marker = if active { "▶" } else { " " };
-                println!("  {marker} {name}  ({})  {}@{}  {}",
-                    match s.server_type { ServerType::Ecom => "ecom", ServerType::Platform => "platform" },
-                    s.ssh_user, s.host, s.health_url
+                println!(
+                    "  {marker} {name}  ({})  {}@{}  {}",
+                    match s.server_type {
+                        ServerType::Ecom => "ecom",
+                        ServerType::Platform => "platform",
+                    },
+                    s.ssh_user,
+                    s.host,
+                    s.health_url
                 );
             }
         }
