@@ -1,9 +1,11 @@
 mod commands;
+mod confirm;
 mod config;
+mod ssh;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use commands::server::ServerCommand;
+use commands::{db::DbCommand, server::ServerCommand};
 
 #[derive(Parser)]
 #[command(name = "sitehaus", version, about = "SiteHaus server management CLI")]
@@ -30,10 +32,16 @@ enum Command {
     },
     /// Show active server and health status
     Status,
+    /// Database operations
+    Db {
+        #[command(subcommand)]
+        cmd: DbCommand,
+    },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let server_override = cli.server.as_deref();
 
     match &cli.command {
         Command::Server { cmd } => commands::server::run(cmd)?,
@@ -60,6 +68,8 @@ fn main() -> Result<()> {
                 }
             }
         }
+
+        Command::Db { cmd } => commands::db::run(cmd, server_override)?,
     }
 
     Ok(())
