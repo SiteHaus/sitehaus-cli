@@ -1,0 +1,15 @@
+[package]
+name = "sitehaus"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "sitehaus"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+anyhow = "1"
+dirs = "5"
