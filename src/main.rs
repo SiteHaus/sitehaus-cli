@@ -48,6 +48,8 @@ enum Command {
     Health,
     /// Pull latest images and restart all services
     Deploy,
+    /// Interactive first-run setup wizard
+    Setup,
 }
 
 fn main() -> Result<()> {
@@ -89,6 +91,7 @@ fn main() -> Result<()> {
         }
         Command::Health => commands::ops::run(&OpsCommand::Health, server_override)?,
         Command::Deploy => commands::ops::run(&OpsCommand::Deploy, server_override)?,
+        Command::Setup => commands::setup::run()?,
     }
 
     Ok(())
