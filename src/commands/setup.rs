@@ -2,6 +2,7 @@ use crate::config::{ServerConfig, ServerType, write_config, read_config};
 use crate::theme;
 use anyhow::Result;
 use dialoguer::{Input, Select, Confirm, theme::ColorfulTheme};
+use std::process::Command;
 
 pub fn run() -> Result<()> {
     let theme = ColorfulTheme::default();
@@ -62,6 +63,43 @@ pub fn run() -> Result<()> {
         } else {
             Some(ssh_key_input.trim().to_string())
         };
+
+        // 8. Test key auth — offer ssh-copy-id if it fails
+        let key = ssh_key_path.as_deref().unwrap_or("");
+        let key_works = Command::new("ssh")
+            .args([
+                "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=5",
+                "-i", key,
+                &format!("{}@{}", ssh_user, host),
+                "true",
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if !key_works {
+            theme::warn("Key auth failed — server is still using password auth.");
+            let copy = Confirm::with_theme(&theme)
+                .with_prompt(format!("Copy {} to {}@{}?", key, ssh_user, host))
+                .default(true)
+                .interact()?;
+
+            if copy {
+                let pub_key = format!("{}.pub", key);
+                let status = Command::new("ssh-copy-id")
+                    .args(["-i", &pub_key, &format!("{}@{}", ssh_user, host)])
+                    .status()?;
+
+                if status.success() {
+                    theme::success("Key copied — password auth no longer needed.");
+                } else {
+                    theme::warn("ssh-copy-id failed. You can do it manually: ssh-copy-id -i {pub_key} {ssh_user}@{host}");
+                }
+            }
+        } else {
+            theme::success("Key auth confirmed.");
+        }
 
         config.servers.insert(name.clone(), ServerConfig {
             server_type,

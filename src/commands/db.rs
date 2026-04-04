@@ -32,9 +32,10 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
             }
 
             println!("Seeding database on {}...", theme::yellow(name));
+            // Copy scripts from server repo into container (not baked into image), then run
             let code = ssh_exec(
                 server,
-                "docker exec sitehaus-commerce-commerce-1 npx tsx scripts/seed.ts",
+                "docker cp /srv/sitehaus-commerce/scripts sitehaus-commerce-commerce-1:/app/ && docker exec sitehaus-commerce-commerce-1 sh -c 'cd /app && npx tsx scripts/seed.ts'",
             );
             std::process::exit(code);
         }
@@ -49,7 +50,7 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
             println!("Running migrations on {}...", theme::yellow(name));
             let code = ssh_exec(
                 server,
-                r#"docker exec sitehaus-commerce-commerce-1 node -e "require('./packages/database/dist/migrate.js')""#,
+                "docker exec sitehaus-commerce-commerce-1 sh -c 'cd /app/packages/database && ./node_modules/.bin/drizzle-kit migrate'",
             );
             std::process::exit(code);
         }
@@ -62,6 +63,8 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
                 "-N".to_string(),
                 "-L".to_string(),
                 "5435:localhost:5432".to_string(),
+                "-o".to_string(),
+                "LogLevel=ERROR".to_string(),
             ];
             if let Some(key) = &server.ssh_key_path {
                 ssh_args.push("-i".to_string());
@@ -74,7 +77,7 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
             std::thread::sleep(std::time::Duration::from_secs(1));
 
             println!("Tunnel open. Run in your commerce repo:");
-            println!("  DATABASE_URL=postgresql://ecom:<password>@localhost:5435/ecommerce pnpm drizzle-kit studio");
+            println!("  cd packages/database && DATABASE_URL=postgresql://ecom:<password>@localhost:5435/ecommerce pnpm drizzle-kit studio");
             println!("\nPress Ctrl+C to close the tunnel.");
 
             tunnel.wait()?;
