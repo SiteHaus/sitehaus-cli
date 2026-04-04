@@ -64,6 +64,7 @@ pub fn run(cmd: &ServerCommand) -> Result<()> {
                     ssh_key_path: ssh_key.clone(),
                     repo_path: repo.clone(),
                     health_url: health_url.clone(),
+                    local_path: None,
                 },
             );
             write_config(&config)?;

@@ -20,6 +20,7 @@ pub struct ServerConfig {
     pub ssh_key_path: Option<String>,
     pub repo_path: String,
     pub health_url: String,
+    pub local_path: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

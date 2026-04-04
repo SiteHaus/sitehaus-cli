@@ -52,7 +52,18 @@ pub fn run() -> Result<()> {
             .default("deploy".to_string())
             .interact_text()?;
 
-        // 7. SSH key path
+        // 7. Local repo path
+        let local_path_input: String = Input::with_theme(&theme)
+            .with_prompt("Local repo path (where you cloned this project)")
+            .default(format!("{}/Dev/sitehaus-commerce", dirs::home_dir().unwrap().display()))
+            .interact_text()?;
+        let local_path = if local_path_input.trim().is_empty() {
+            None
+        } else {
+            Some(local_path_input.trim().to_string())
+        };
+
+        // 8. SSH key path
         let ssh_key_input: String = Input::with_theme(&theme)
             .with_prompt("SSH key path (leave blank for default ~/.ssh/id_ed25519)")
             .allow_empty(true)
@@ -108,6 +119,7 @@ pub fn run() -> Result<()> {
             ssh_key_path,
             repo_path,
             health_url,
+            local_path,
         });
 
         theme::success(&format!("Server \"{}\" added.", theme::yellow(&name)));
