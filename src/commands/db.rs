@@ -1,5 +1,5 @@
 use crate::confirm::{confirm, confirm_prod, is_prod};
-use crate::config::{read_config, resolve_server};
+use crate::config::{read_config, resolve_server, ServerType};
 use crate::ssh::{ssh_capture, ssh_exec};
 use crate::theme;
 use anyhow::{Context, Result};
@@ -14,6 +14,17 @@ pub enum DbCommand {
     Migrate,
     /// Open Drizzle Studio via SSH tunnel
     Studio,
+    /// Provision a client store (ecom servers only)
+    Provision {
+        /// Client to provision: onehealth
+        client: String,
+        /// Storefront domain (e.g. onehealthclinics.com)
+        #[arg(long)]
+        domain: String,
+        /// Stripe Connect account ID (e.g. acct_xxx) — optional, can be added later
+        #[arg(long)]
+        stripe_account: Option<String>,
+    },
 }
 
 pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
@@ -26,17 +37,38 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
                 confirm_prod(name)?;
             } else {
                 confirm(&format!(
-                    "Seed database on \"{}\"? This will wipe and re-insert seed data.",
+                    "Seed database on \"{}\"?",
                     theme::yellow(name)
                 ))?;
             }
 
             println!("Seeding database on {}...", theme::yellow(name));
-            // Copy scripts from server repo into container (not baked into image), then run
-            let code = ssh_exec(
-                server,
-                "docker cp /srv/sitehaus-commerce/scripts sitehaus-commerce-commerce-1:/app/ && docker exec sitehaus-commerce-commerce-1 sh -c 'cd /app && npx tsx scripts/seed.ts'",
-            );
+
+            let code = match server.server_type {
+                ServerType::Ecom => {
+                    // Copy seed scripts into the commerce container and run with tsx
+                    ssh_exec(
+                        server,
+                        "docker cp /srv/sitehaus-commerce/scripts sitehaus-commerce-commerce-1:/app/ && docker exec sitehaus-commerce-commerce-1 sh -c 'cd /app && npx tsx scripts/seed.ts'",
+                    )
+                }
+                ServerType::Platform => {
+                    // Fetch DATABASE_URL from the running api container, then seed via a
+                    // temporary node container sharing the api container's network namespace
+                    // so it can reach postgres without needing to know the compose network name.
+                    ssh_exec(
+                        server,
+                        "DB_URL=$(docker exec sitehaus-api-1 printenv DATABASE_URL) && \
+                         docker run --rm \
+                           --network container:sitehaus-api-1 \
+                           -e DATABASE_URL=\"$DB_URL\" \
+                           -v /srv/sitehaus:/app \
+                           -w /app \
+                           node:20-alpine \
+                           sh -c 'corepack enable && corepack prepare pnpm@10.14.0 --activate && pnpm install --frozen-lockfile && pnpm turbo run build --filter=@site-haus/db... && pnpm --filter @site-haus/db db:seed'",
+                    )
+                }
+            };
             std::process::exit(code);
         }
 
@@ -52,6 +84,45 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
                 server,
                 "docker exec sitehaus-commerce-commerce-1 sh -c 'cd /app/packages/database && ./node_modules/.bin/drizzle-kit migrate'",
             );
+            std::process::exit(code);
+        }
+
+        DbCommand::Provision { client, domain, stripe_account } => {
+            match server.server_type {
+                ServerType::Platform => anyhow::bail!("provision is only supported on ecom servers"),
+                ServerType::Ecom => {}
+            }
+
+            let script = match client.as_str() {
+                "onehealth" => "provision-onehealth.ts",
+                other => anyhow::bail!("unknown client \"{other}\" — supported: onehealth"),
+            };
+
+            let stripe_display = stripe_account.as_deref().unwrap_or("none — payment disabled");
+            confirm(&format!(
+                "Provision \"{}\" on {} (domain: {}, stripe: {})?",
+                theme::yellow(client),
+                theme::yellow(name),
+                domain,
+                stripe_display,
+            ))?;
+
+            println!("Provisioning {} on {}...", theme::yellow(client), theme::yellow(name));
+
+            let stripe_env = match stripe_account.as_deref() {
+                Some(acct) => format!("-e PROVISION_STRIPE_ACCOUNT={acct}"),
+                None => String::new(),
+            };
+
+            let cmd = format!(
+                "docker exec \
+                   -e DATABASE_URL=$(docker exec sitehaus-commerce-commerce-1 printenv DATABASE_URL) \
+                   -e PROVISION_DOMAIN={domain} \
+                   {stripe_env} \
+                   sitehaus-commerce-commerce-1 \
+                   sh -c 'cd /app && npx tsx scripts/{script}'"
+            );
+            let code = ssh_exec(server, &cmd);
             std::process::exit(code);
         }
 

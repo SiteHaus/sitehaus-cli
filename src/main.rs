@@ -46,8 +46,16 @@ enum Command {
     },
     /// Stream service logs
     Logs {
-        /// Service name: gateway, commerce, payments, worker, caddy, postgres, redis
+        /// Service name (ecom: gateway, commerce, payments, worker, caddy, postgres, redis)
+        ///             (platform: api, web, dashboard, iam, commerce, caddy, postgres, redis)
         service: Option<String>,
+    },
+    /// Show running containers on the active server
+    Ps,
+    /// Restart one or more services (restarts all if none specified)
+    Restart {
+        /// Service(s) to restart
+        services: Vec<String>,
     },
     /// Check the server health endpoint
     Health,
@@ -114,6 +122,10 @@ fn main() -> Result<()> {
 
         Command::Logs { service } => {
             commands::ops::run(&OpsCommand::Logs { service: service.clone() }, server_override)?
+        }
+        Command::Ps => commands::ops::run(&OpsCommand::Ps, server_override)?,
+        Command::Restart { services } => {
+            commands::ops::run(&OpsCommand::Restart { services: services.clone() }, server_override)?
         }
         Command::Health => commands::ops::run(&OpsCommand::Health, server_override)?,
         Command::Deploy => commands::ops::run(&OpsCommand::Deploy, server_override)?,

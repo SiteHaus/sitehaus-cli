@@ -40,29 +40,29 @@ Walks you through registering your servers interactively. Config lives at `~/.si
 
 ### Context
 
-| Command | Description |
-|---------|-------------|
-| `sitehaus use <server>` | Set the active server |
-| `sitehaus status` | Show active server + health |
+| Command                 | Description                 |
+| ----------------------- | --------------------------- |
+| `sitehaus use <server>` | Set the active server       |
+| `sitehaus status`       | Show active server + health |
 
 ### Server management
 
-| Command | Description |
-|---------|-------------|
-| `sitehaus server add` | Register a server |
-| `sitehaus server list` | List all servers |
-| `sitehaus server remove <name>` | Remove a server |
+| Command                         | Description       |
+| ------------------------------- | ----------------- |
+| `sitehaus server add`           | Register a server |
+| `sitehaus server list`          | List all servers  |
+| `sitehaus server remove <name>` | Remove a server   |
 
 ### ecom
 
-| Command | Description |
-|---------|-------------|
-| `sitehaus db seed` | Seed the database |
-| `sitehaus db migrate` | Run migrations |
-| `sitehaus db studio` | Open Drizzle Studio via SSH tunnel |
-| `sitehaus logs [service]` | Tail service logs |
-| `sitehaus health` | Check health endpoint |
-| `sitehaus deploy` | Pull + restart all services |
+| Command                   | Description                        |
+| ------------------------- | ---------------------------------- |
+| `sitehaus db seed`        | Seed the database                  |
+| `sitehaus db migrate`     | Run migrations                     |
+| `sitehaus db studio`      | Open Drizzle Studio via SSH tunnel |
+| `sitehaus logs [service]` | Tail service logs                  |
+| `sitehaus health`         | Check health endpoint              |
+| `sitehaus deploy`         | Pull + restart all services        |
 
 Any command accepts `--server=<name>` to override the active server.
 

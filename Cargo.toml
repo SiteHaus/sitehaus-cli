@@ -17,4 +17,4 @@ dialoguer = "0.11"
 ureq = "2"
 owo-colors = "4"
 indicatif = "0.17"
-tabled = "0.17"
+tabled = { version = "0.17", features = ["ansi"] }
