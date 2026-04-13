@@ -44,6 +44,8 @@ enum Command {
         #[command(subcommand)]
         cmd: DbCommand,
     },
+    /// Check required env vars on the active server
+    EnvCheck,
     /// Stream service logs
     Logs {
         /// Service name (ecom: gateway, commerce, payments, worker, caddy, postgres, redis)
@@ -119,6 +121,8 @@ fn main() -> Result<()> {
         }
 
         Command::Db { cmd } => commands::db::run(cmd, server_override)?,
+
+        Command::EnvCheck => commands::env::run(server_override)?,
 
         Command::Logs { service } => {
             commands::ops::run(&OpsCommand::Logs { service: service.clone() }, server_override)?
