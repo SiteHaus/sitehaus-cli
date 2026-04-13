@@ -39,7 +39,7 @@ pub enum DbCommand {
 }
 
 /// Returns the primary app container name for a server type.
-fn app_container(server_type: &ServerType) -> &'static str {
+pub(crate) fn app_container(server_type: &ServerType) -> &'static str {
     match server_type {
         ServerType::Ecom => "sitehaus-commerce-commerce-1",
         ServerType::Platform => "sitehaus-api-1",
@@ -47,7 +47,7 @@ fn app_container(server_type: &ServerType) -> &'static str {
 }
 
 /// Returns the postgres container name for a server type.
-fn pg_container(server_type: &ServerType) -> &'static str {
+pub(crate) fn pg_container(server_type: &ServerType) -> &'static str {
     match server_type {
         ServerType::Ecom => "sitehaus-commerce-postgres-1",
         ServerType::Platform => "sitehaus-postgres-1",
@@ -57,7 +57,7 @@ fn pg_container(server_type: &ServerType) -> &'static str {
 /// Run a SQL query against a server's database and return trimmed output.
 /// Connects via Unix socket inside the postgres container to bypass pg_hba.conf TCP restrictions.
 /// Uses `-t -A` for clean, unaligned output suitable for parsing.
-fn psql_capture(server: &ServerConfig, sql: &str) -> Result<String> {
+pub(crate) fn psql_capture(server: &ServerConfig, sql: &str) -> Result<String> {
     let app = app_container(&server.server_type);
     let pg = pg_container(&server.server_type);
     let escaped = sql.replace('\'', "'\\''");

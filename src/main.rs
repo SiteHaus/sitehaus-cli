@@ -8,7 +8,7 @@ use anyhow::Result;
 use owo_colors::OwoColorize;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use clap::builder::styling::{AnsiColor, Color, Effects, RgbColor, Style, Styles};
-use commands::{db::DbCommand, ops::OpsCommand, server::ServerCommand};
+use commands::{db::DbCommand, ops::OpsCommand, server::ServerCommand, store::StoreCommand};
 
 #[derive(Parser)]
 #[command(name = "sitehaus", version, about = "SiteHaus server management CLI", disable_help_flag = true)]
@@ -43,6 +43,11 @@ enum Command {
     Db {
         #[command(subcommand)]
         cmd: DbCommand,
+    },
+    /// Validate store setup: DB chain, IAM link, and live resolution
+    Store {
+        #[command(subcommand)]
+        cmd: StoreCommand,
     },
     /// Check required env vars on the active server
     EnvCheck,
@@ -121,6 +126,8 @@ fn main() -> Result<()> {
         }
 
         Command::Db { cmd } => commands::db::run(cmd, server_override)?,
+
+        Command::Store { cmd } => commands::store::run(cmd, server_override)?,
 
         Command::EnvCheck => commands::env::run(server_override)?,
 
