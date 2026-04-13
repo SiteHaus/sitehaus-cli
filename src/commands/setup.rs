@@ -1,7 +1,7 @@
-use crate::config::{ServerConfig, ServerType, write_config, read_config};
+use crate::config::{ServerConfig, ServerType, read_config, write_config};
 use crate::theme;
 use anyhow::Result;
-use dialoguer::{Input, Select, Confirm, theme::ColorfulTheme};
+use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 use std::process::Command;
 
 pub fn run() -> Result<()> {
@@ -55,7 +55,10 @@ pub fn run() -> Result<()> {
         // 7. Local repo path
         let local_path_input: String = Input::with_theme(&theme)
             .with_prompt("Local repo path (where you cloned this project)")
-            .default(format!("{}/Dev/sitehaus-commerce", dirs::home_dir().unwrap().display()))
+            .default(format!(
+                "{}/Dev/sitehaus-commerce",
+                dirs::home_dir().unwrap().display()
+            ))
             .interact_text()?;
         let local_path = if local_path_input.trim().is_empty() {
             None
@@ -79,9 +82,12 @@ pub fn run() -> Result<()> {
         let key = ssh_key_path.as_deref().unwrap_or("");
         let key_works = Command::new("ssh")
             .args([
-                "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=5",
-                "-i", key,
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "-i",
+                key,
                 &format!("{}@{}", ssh_user, host),
                 "true",
             ])
@@ -105,22 +111,27 @@ pub fn run() -> Result<()> {
                 if status.success() {
                     theme::success("Key copied — password auth no longer needed.");
                 } else {
-                    theme::warn("ssh-copy-id failed. You can do it manually: ssh-copy-id -i {pub_key} {ssh_user}@{host}");
+                    theme::warn(
+                        "ssh-copy-id failed. You can do it manually: ssh-copy-id -i {pub_key} {ssh_user}@{host}",
+                    );
                 }
             }
         } else {
             theme::success("Key auth confirmed.");
         }
 
-        config.servers.insert(name.clone(), ServerConfig {
-            server_type,
-            host,
-            ssh_user,
-            ssh_key_path,
-            repo_path,
-            health_url,
-            local_path,
-        });
+        config.servers.insert(
+            name.clone(),
+            ServerConfig {
+                server_type,
+                host,
+                ssh_user,
+                ssh_key_path,
+                repo_path,
+                health_url,
+                local_path,
+            },
+        );
 
         theme::success(&format!("Server \"{}\" added.", theme::yellow(&name)));
         println!();
@@ -141,7 +152,10 @@ pub fn run() -> Result<()> {
     if config.servers.len() == 1 {
         let name = config.servers.keys().next().unwrap().clone();
         config.active_server = Some(name.clone());
-        theme::success(&format!("Active server set to \"{}\".", theme::yellow(&name)));
+        theme::success(&format!(
+            "Active server set to \"{}\".",
+            theme::yellow(&name)
+        ));
     } else if config.servers.len() > 1 {
         let names: Vec<String> = config.servers.keys().cloned().collect();
         let idx = Select::with_theme(&theme)
@@ -150,7 +164,10 @@ pub fn run() -> Result<()> {
             .default(0)
             .interact()?;
         config.active_server = Some(names[idx].clone());
-        theme::success(&format!("Active server set to \"{}\".", theme::yellow(&names[idx])));
+        theme::success(&format!(
+            "Active server set to \"{}\".",
+            theme::yellow(&names[idx])
+        ));
     }
 
     write_config(&config)?;

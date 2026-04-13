@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use dialoguer::{Confirm, Input, theme::ColorfulTheme};
 
 /// Simple y/N confirmation. Returns Ok(()) if confirmed, bails if not.

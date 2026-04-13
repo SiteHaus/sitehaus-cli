@@ -1,4 +1,4 @@
-use crate::config::{read_config, resolve_server, ServerType};
+use crate::config::{ServerType, read_config, resolve_server};
 use crate::ssh::ssh_capture;
 use crate::theme;
 use anyhow::Result;
@@ -16,28 +16,108 @@ struct EnvRule {
 fn rules_for(server_type: &ServerType) -> Vec<EnvRule> {
     match server_type {
         ServerType::Ecom => vec![
-            EnvRule { key: "DATABASE_URL",         required: true,  check: Some(check_no_localhost) },
-            EnvRule { key: "REDIS_URL",             required: true,  check: Some(check_no_localhost) },
-            EnvRule { key: "IAM_URL",               required: true,  check: Some(check_no_localhost) },
-            EnvRule { key: "IAM_CLIENT_KEY",        required: true,  check: None },
-            EnvRule { key: "SESSION_SECRET",        required: true,  check: Some(check_secret_length) },
-            EnvRule { key: "STRIPE_SECRET_KEY",     required: false, check: Some(check_stripe_key) },
-            EnvRule { key: "STRIPE_WEBHOOK_SECRET", required: false, check: None },
-            EnvRule { key: "R2_ACCESS_KEY_ID",      required: false, check: None },
-            EnvRule { key: "R2_SECRET_ACCESS_KEY",  required: false, check: None },
-            EnvRule { key: "R2_BUCKET",             required: false, check: None },
-            EnvRule { key: "R2_ENDPOINT",           required: false, check: None },
-            EnvRule { key: "CDN_BASE_URL",          required: false, check: None },
-            EnvRule { key: "PORT",                  required: false, check: None },
+            EnvRule {
+                key: "DATABASE_URL",
+                required: true,
+                check: Some(check_no_localhost),
+            },
+            EnvRule {
+                key: "REDIS_URL",
+                required: true,
+                check: Some(check_no_localhost),
+            },
+            EnvRule {
+                key: "IAM_URL",
+                required: true,
+                check: Some(check_no_localhost),
+            },
+            EnvRule {
+                key: "IAM_CLIENT_KEY",
+                required: true,
+                check: None,
+            },
+            EnvRule {
+                key: "SESSION_SECRET",
+                required: true,
+                check: Some(check_secret_length),
+            },
+            EnvRule {
+                key: "STRIPE_SECRET_KEY",
+                required: false,
+                check: Some(check_stripe_key),
+            },
+            EnvRule {
+                key: "STRIPE_WEBHOOK_SECRET",
+                required: false,
+                check: None,
+            },
+            EnvRule {
+                key: "R2_ACCESS_KEY_ID",
+                required: false,
+                check: None,
+            },
+            EnvRule {
+                key: "R2_SECRET_ACCESS_KEY",
+                required: false,
+                check: None,
+            },
+            EnvRule {
+                key: "R2_BUCKET",
+                required: false,
+                check: None,
+            },
+            EnvRule {
+                key: "R2_ENDPOINT",
+                required: false,
+                check: None,
+            },
+            EnvRule {
+                key: "CDN_BASE_URL",
+                required: false,
+                check: None,
+            },
+            EnvRule {
+                key: "PORT",
+                required: false,
+                check: None,
+            },
         ],
         ServerType::Platform => vec![
-            EnvRule { key: "DATABASE_URL",     required: true,  check: Some(check_no_localhost) },
-            EnvRule { key: "JWT_SECRET",       required: true,  check: Some(check_secret_length) },
-            EnvRule { key: "ACCESS_TTL_SEC",   required: true,  check: None },
-            EnvRule { key: "REFRESH_TTL_SEC",  required: true,  check: None },
-            EnvRule { key: "RESEND_API_KEY",   required: false, check: None },
-            EnvRule { key: "COOKIE_DOMAIN",    required: false, check: Some(check_no_localhost) },
-            EnvRule { key: "COOKIE_SAME_SITE", required: false, check: None },
+            EnvRule {
+                key: "DATABASE_URL",
+                required: true,
+                check: Some(check_no_localhost),
+            },
+            EnvRule {
+                key: "JWT_SECRET",
+                required: true,
+                check: Some(check_secret_length),
+            },
+            EnvRule {
+                key: "ACCESS_TTL_SEC",
+                required: true,
+                check: None,
+            },
+            EnvRule {
+                key: "REFRESH_TTL_SEC",
+                required: true,
+                check: None,
+            },
+            EnvRule {
+                key: "RESEND_API_KEY",
+                required: false,
+                check: None,
+            },
+            EnvRule {
+                key: "COOKIE_DOMAIN",
+                required: false,
+                check: Some(check_no_localhost),
+            },
+            EnvRule {
+                key: "COOKIE_SAME_SITE",
+                required: false,
+                check: None,
+            },
         ],
     }
 }
@@ -54,7 +134,10 @@ fn check_no_localhost(value: &str, _is_prod: bool) -> Option<String> {
 /// Warn if a secret is shorter than 32 characters
 fn check_secret_length(value: &str, _is_prod: bool) -> Option<String> {
     if value.len() < 32 {
-        Some(format!("only {} chars — minimum 32 recommended", value.len()))
+        Some(format!(
+            "only {} chars — minimum 32 recommended",
+            value.len()
+        ))
     } else {
         None
     }
@@ -100,16 +183,14 @@ pub fn run(server_override: Option<&str>) -> Result<()> {
 
     let env = fetch_env(server, container)?;
     if env.is_empty() {
-        anyhow::bail!(
-            "could not read env from container \"{container}\" — is it running?"
-        );
+        anyhow::bail!("could not read env from container \"{container}\" — is it running?");
     }
 
     let rules = rules_for(&server.server_type);
 
-    let tick  = "✓".green().bold().to_string();
+    let tick = "✓".green().bold().to_string();
     let cross = "✗".red().bold().to_string();
-    let warn  = "⚠".yellow().bold().to_string();
+    let warn = "⚠".yellow().bold().to_string();
 
     let mut missing = 0usize;
     let mut warnings = 0usize;
@@ -121,7 +202,12 @@ pub fn run(server_override: Option<&str>) -> Result<()> {
                     println!("  {cross}  {:<28} {}", rule.key, "missing".red());
                     missing += 1;
                 } else {
-                    println!("  {}  {:<28} {}", "–".dimmed(), rule.key, "not set (optional)".dimmed());
+                    println!(
+                        "  {}  {:<28} {}",
+                        "–".dimmed(),
+                        rule.key,
+                        "not set (optional)".dimmed()
+                    );
                 }
             }
             Some(value) => {
@@ -164,9 +250,13 @@ pub fn run(server_override: Option<&str>) -> Result<()> {
 /// Mask sensitive values: show first 4 chars + asterisks, full value for non-secrets
 fn mask(key: &str, value: &str) -> String {
     const SECRET_KEYS: &[&str] = &[
-        "DATABASE_URL", "JWT_SECRET", "SESSION_SECRET",
-        "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET",
-        "R2_SECRET_ACCESS_KEY", "RESEND_API_KEY",
+        "DATABASE_URL",
+        "JWT_SECRET",
+        "SESSION_SECRET",
+        "STRIPE_SECRET_KEY",
+        "STRIPE_WEBHOOK_SECRET",
+        "R2_SECRET_ACCESS_KEY",
+        "RESEND_API_KEY",
     ];
     if SECRET_KEYS.contains(&key) {
         let visible = value.chars().take(4).collect::<String>();

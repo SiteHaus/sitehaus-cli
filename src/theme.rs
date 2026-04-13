@@ -21,9 +21,9 @@ pub fn gradient(s: &str) -> String {
 
     // Colour stops: yellow → white → purple
     let stops: &[(u8, u8, u8)] = &[
-        (252, 244,  52),  // #FCF434 yellow
-        (255, 255, 255),  // #FFFFFF white
-        (156,  89, 209),  // #9C59D1 purple
+        (252, 244, 52),  // #FCF434 yellow
+        (255, 255, 255), // #FFFFFF white
+        (156, 89, 209),  // #9C59D1 purple
     ];
 
     let mut out = String::new();

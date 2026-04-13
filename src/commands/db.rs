@@ -1,5 +1,5 @@
+use crate::config::{ServerConfig, ServerType, get_server, read_config, resolve_server};
 use crate::confirm::{confirm, confirm_prod, is_prod};
-use crate::config::{get_server, read_config, resolve_server, ServerConfig, ServerType};
 use crate::ssh::{ssh_capture, ssh_exec};
 use crate::theme;
 use anyhow::{Context, Result};
@@ -180,9 +180,17 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
             std::process::exit(code);
         }
 
-        DbCommand::Provision { client, domain, client_key, platform_server, stripe_account } => {
+        DbCommand::Provision {
+            client,
+            domain,
+            client_key,
+            platform_server,
+            stripe_account,
+        } => {
             match server.server_type {
-                ServerType::Platform => anyhow::bail!("provision is only supported on ecom servers"),
+                ServerType::Platform => {
+                    anyhow::bail!("provision is only supported on ecom servers")
+                }
                 ServerType::Ecom => {}
             }
 
@@ -192,8 +200,9 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
             };
 
             // Resolve the IAM client ID from the platform server
-            let platform = get_server(&config, platform_server)
-                .with_context(|| format!("platform server \"{platform_server}\" not found in config"))?;
+            let platform = get_server(&config, platform_server).with_context(|| {
+                format!("platform server \"{platform_server}\" not found in config")
+            })?;
 
             println!(
                 "Looking up client ID for key \"{}\" on {}...",
@@ -212,7 +221,9 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
                 );
             }
 
-            let stripe_display = stripe_account.as_deref().unwrap_or("none — payment disabled");
+            let stripe_display = stripe_account
+                .as_deref()
+                .unwrap_or("none — payment disabled");
             confirm(&format!(
                 "Provision \"{}\" on {} (domain: {}, client-id: {}, stripe: {})?",
                 theme::yellow(client),
@@ -222,7 +233,11 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
                 stripe_display,
             ))?;
 
-            println!("Provisioning {} on {}...", theme::yellow(client), theme::yellow(name));
+            println!(
+                "Provisioning {} on {}...",
+                theme::yellow(client),
+                theme::yellow(name)
+            );
 
             let stripe_env = match stripe_account.as_deref() {
                 Some(acct) => format!("-e PROVISION_STRIPE_ACCOUNT={acct}"),
@@ -255,10 +270,7 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
 
             println!("Fetching DATABASE_URL from {}...", theme::yellow(name));
             let app = app_container(&server.server_type);
-            let raw_url = ssh_capture(
-                server,
-                &format!("docker exec {app} printenv DATABASE_URL"),
-            )?;
+            let raw_url = ssh_capture(server, &format!("docker exec {app} printenv DATABASE_URL"))?;
             if raw_url.is_empty() {
                 anyhow::bail!("could not fetch DATABASE_URL from container");
             }
@@ -282,7 +294,11 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
             // e.g. postgresql://user:pass@postgres:5432/db → @localhost:5435/db
             let db_url = rewrite_db_url(&raw_url, "localhost", 5435);
 
-            println!("Opening tunnel: localhost:5435 → {}:5432 (via {})", theme::yellow(name), pg_ip);
+            println!(
+                "Opening tunnel: localhost:5435 → {}:5432 (via {})",
+                theme::yellow(name),
+                pg_ip
+            );
             let tunnel_spec = format!("5435:{}:5432", pg_ip);
             let mut ssh_args = vec![
                 "-N".to_string(),

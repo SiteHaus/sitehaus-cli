@@ -1,4 +1,4 @@
-use crate::config::{read_config, resolve_server, ServerType};
+use crate::config::{ServerType, read_config, resolve_server};
 use crate::confirm::confirm;
 use crate::ssh::ssh_exec;
 use crate::theme;
@@ -36,8 +36,9 @@ pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
         OpsCommand::Logs { service } => {
             let remote_cmd = match server.server_type {
                 ServerType::Ecom => {
-                    const VALID: &[&str] =
-                        &["gateway", "commerce", "payments", "worker", "caddy", "postgres", "redis"];
+                    const VALID: &[&str] = &[
+                        "gateway", "commerce", "payments", "worker", "caddy", "postgres", "redis",
+                    ];
                     match service {
                         Some(svc) => {
                             if !VALID.contains(&svc.as_str()) {
@@ -49,8 +50,16 @@ pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
                     }
                 }
                 ServerType::Platform => {
-                    const VALID: &[&str] =
-                        &["api", "web", "dashboard", "iam", "commerce", "caddy", "postgres", "redis"];
+                    const VALID: &[&str] = &[
+                        "api",
+                        "web",
+                        "dashboard",
+                        "iam",
+                        "commerce",
+                        "caddy",
+                        "postgres",
+                        "redis",
+                    ];
                     match service {
                         Some(svc) => {
                             if !VALID.contains(&svc.as_str()) {
@@ -67,7 +76,10 @@ pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
         }
 
         OpsCommand::Ps => {
-            let code = ssh_exec(server, "docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Image}}'");
+            let code = ssh_exec(
+                server,
+                "docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Image}}'",
+            );
             std::process::exit(code);
         }
 
@@ -139,7 +151,10 @@ pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
         }
 
         OpsCommand::Deploy => {
-            confirm(&format!("Deploy to \"{}\"? This will pull latest images and restart all services.", theme::yellow(name)))?;
+            confirm(&format!(
+                "Deploy to \"{}\"? This will pull latest images and restart all services.",
+                theme::yellow(name)
+            ))?;
             println!("Deploying to {}...", theme::yellow(name));
             let cmd = match server.server_type {
                 ServerType::Ecom => {

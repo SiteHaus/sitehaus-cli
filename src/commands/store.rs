@@ -1,4 +1,4 @@
-use crate::config::{get_server, read_config, resolve_server, ServerType};
+use crate::config::{ServerType, get_server, read_config, resolve_server};
 use crate::ssh::ssh_capture;
 use crate::theme;
 use anyhow::{Context, Result};
@@ -21,20 +21,25 @@ pub enum StoreCommand {
 
 pub fn run(cmd: &StoreCommand, server_override: Option<&str>) -> Result<()> {
     match cmd {
-        StoreCommand::Check { slug, platform_server } => {
+        StoreCommand::Check {
+            slug,
+            platform_server,
+        } => {
             let config = read_config()?;
             let (ecom_name, ecom_server) = resolve_server(&config, server_override)?;
 
             match ecom_server.server_type {
                 ServerType::Platform => {
-                    anyhow::bail!("store check requires an ecom server — use --server or sitehaus use <ecom-server>")
+                    anyhow::bail!(
+                        "store check requires an ecom server — use --server or sitehaus use <ecom-server>"
+                    )
                 }
                 ServerType::Ecom => {}
             }
 
-            let tick  = "✓".green().bold().to_string();
+            let tick = "✓".green().bold().to_string();
             let cross = "✗".red().bold().to_string();
-            let warn  = "⚠".yellow().bold().to_string();
+            let warn = "⚠".yellow().bold().to_string();
 
             println!(
                 "\n  Checking store {} on {}...\n",
@@ -62,7 +67,9 @@ pub fn run(cmd: &StoreCommand, server_override: Option<&str>) -> Result<()> {
                     format!("Run: sitehaus db provision {slug} --client-key <key> --platform-server <name>").dimmed()
                 );
                 println!();
-                theme::error(&format!("Store \"{slug}\" is not provisioned on \"{ecom_name}\"."));
+                theme::error(&format!(
+                    "Store \"{slug}\" is not provisioned on \"{ecom_name}\"."
+                ));
                 println!();
                 return Ok(());
             }
@@ -84,28 +91,26 @@ pub fn run(cmd: &StoreCommand, server_override: Option<&str>) -> Result<()> {
             println!();
 
             // ── Step 2: Platform IAM ────────────────────────────────────────────
-            let platform = get_server(&config, platform_server)
-                .with_context(|| {
-                    format!(
-                        "platform server \"{platform_server}\" not found — \
+            let platform = get_server(&config, platform_server).with_context(|| {
+                format!(
+                    "platform server \"{platform_server}\" not found — \
                          run: sitehaus server list"
-                    )
-                })?;
+                )
+            })?;
 
-            println!("  {} Platform IAM  ({})", "→".dimmed(), platform_server.dimmed());
+            println!(
+                "  {} Platform IAM  ({})",
+                "→".dimmed(),
+                platform_server.dimmed()
+            );
 
             let client_row = psql_capture(
                 platform,
-                &format!(
-                    "SELECT id, key, is_active FROM clients WHERE id = '{store_client_id}'"
-                ),
+                &format!("SELECT id, key, is_active FROM clients WHERE id = '{store_client_id}'"),
             )?;
 
             if client_row.trim().is_empty() {
-                println!(
-                    "  {cross}  {:<24} id={store_client_id}",
-                    "client not found"
-                );
+                println!("  {cross}  {:<24} id={store_client_id}", "client not found");
                 println!(
                     "         {}",
                     "The store's client_id doesn't exist in IAM — re-provision with the correct --client-key".dimmed()
@@ -165,9 +170,7 @@ pub fn run(cmd: &StoreCommand, server_override: Option<&str>) -> Result<()> {
 
             let result = ssh_capture(ecom_server, &curl_cmd)?;
             let result = result.trim();
-            let (status_str, body) = result
-                .split_once(' ')
-                .unwrap_or((result, ""));
+            let (status_str, body) = result.split_once(' ').unwrap_or((result, ""));
 
             match status_str {
                 "401" | "403" => {
@@ -178,17 +181,10 @@ pub fn run(cmd: &StoreCommand, server_override: Option<&str>) -> Result<()> {
                     );
                 }
                 "200" => {
-                    println!(
-                        "  {tick}  {:<24} {}",
-                        "GET /v1/products",
-                        "200 OK".green()
-                    );
+                    println!("  {tick}  {:<24} {}", "GET /v1/products", "200 OK".green());
                 }
                 "404" if body.contains("Store not found") => {
-                    println!(
-                        "  {cross}  {:<24} 404 Store not found",
-                        "GET /v1/products"
-                    );
+                    println!("  {cross}  {:<24} 404 Store not found", "GET /v1/products");
                     println!(
                         "         {}",
                         "DB records look correct but gateway returned 404 — try: sitehaus restart gateway".dimmed()
@@ -213,9 +209,7 @@ pub fn run(cmd: &StoreCommand, server_override: Option<&str>) -> Result<()> {
                     "Store \"{slug}\" is wired up correctly on \"{ecom_name}\"."
                 ));
             } else {
-                theme::error(&format!(
-                    "Store \"{slug}\" has issues — see above."
-                ));
+                theme::error(&format!("Store \"{slug}\" has issues — see above."));
             }
 
             println!();

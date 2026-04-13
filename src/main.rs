@@ -1,17 +1,22 @@
 mod commands;
-mod confirm;
 mod config;
+mod confirm;
 mod ssh;
 mod theme;
 
 use anyhow::Result;
-use owo_colors::OwoColorize;
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use clap::builder::styling::{AnsiColor, Color, Effects, RgbColor, Style, Styles};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use commands::{db::DbCommand, ops::OpsCommand, server::ServerCommand, store::StoreCommand};
+use owo_colors::OwoColorize;
 
 #[derive(Parser)]
-#[command(name = "sitehaus", version, about = "SiteHaus server management CLI", disable_help_flag = true)]
+#[command(
+    name = "sitehaus",
+    version,
+    about = "SiteHaus server management CLI",
+    disable_help_flag = true
+)]
 struct Cli {
     /// Print help
     #[arg(short, long, global = true, action = clap::ArgAction::HelpLong)]
@@ -84,9 +89,13 @@ fn styles() -> Styles {
     Styles::styled()
         .header(white_bold.clone())
         .usage(white_bold)
-        .literal(yellow)        // command names & flags
+        .literal(yellow) // command names & flags
         .placeholder(dimmed.clone())
-        .error(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Red))).effects(Effects::BOLD))
+        .error(
+            Style::new()
+                .fg_color(Some(Color::Ansi(AnsiColor::Red)))
+                .effects(Effects::BOLD),
+        )
         .valid(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Green))))
         .invalid(dimmed)
 }
@@ -95,8 +104,7 @@ fn main() -> Result<()> {
     let banner = format!("\n  {}\n", theme::gradient("sitehaus"));
     let cmd = Cli::command().styles(styles()).before_help(banner);
     let matches = cmd.get_matches();
-    let cli = Cli::from_arg_matches(&matches)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let cli = Cli::from_arg_matches(&matches).map_err(|e| anyhow::anyhow!(e.to_string()))?;
     let server_override = cli.server.as_deref();
 
     match &cli.command {
@@ -107,7 +115,10 @@ fn main() -> Result<()> {
             config::get_server(&config, name)?;
             config.active_server = Some(name.clone());
             config::write_config(&config)?;
-            theme::success(&format!("Active server set to \"{}\".", theme::yellow(name)));
+            theme::success(&format!(
+                "Active server set to \"{}\".",
+                theme::yellow(name)
+            ));
         }
 
         Command::Status => {
@@ -131,13 +142,19 @@ fn main() -> Result<()> {
 
         Command::EnvCheck => commands::env::run(server_override)?,
 
-        Command::Logs { service } => {
-            commands::ops::run(&OpsCommand::Logs { service: service.clone() }, server_override)?
-        }
+        Command::Logs { service } => commands::ops::run(
+            &OpsCommand::Logs {
+                service: service.clone(),
+            },
+            server_override,
+        )?,
         Command::Ps => commands::ops::run(&OpsCommand::Ps, server_override)?,
-        Command::Restart { services } => {
-            commands::ops::run(&OpsCommand::Restart { services: services.clone() }, server_override)?
-        }
+        Command::Restart { services } => commands::ops::run(
+            &OpsCommand::Restart {
+                services: services.clone(),
+            },
+            server_override,
+        )?,
         Command::Health => commands::ops::run(&OpsCommand::Health, server_override)?,
         Command::Deploy => commands::ops::run(&OpsCommand::Deploy, server_override)?,
         Command::Setup => commands::setup::run()?,

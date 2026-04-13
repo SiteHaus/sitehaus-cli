@@ -2,7 +2,10 @@ use crate::config::{ServerConfig, ServerType, read_config, write_config};
 use crate::theme;
 use anyhow::Result;
 use clap::Subcommand;
-use tabled::{Table, Tabled, settings::{Style, object::Columns, Modify, Alignment}};
+use tabled::{
+    Table, Tabled,
+    settings::{Alignment, Modify, Style, object::Columns},
+};
 
 #[derive(Subcommand)]
 pub enum ServerCommand {
@@ -86,8 +89,10 @@ pub fn run(cmd: &ServerCommand) -> Result<()> {
                 ssh_user: String,
             }
 
-            let mut rows: Vec<Row> = config.servers.iter().map(|(name, s)| {
-                Row {
+            let mut rows: Vec<Row> = config
+                .servers
+                .iter()
+                .map(|(name, s)| Row {
                     is_active: config.active_server.as_deref() == Some(name.as_str()),
                     name: name.clone(),
                     server_type: match s.server_type {
@@ -96,22 +101,40 @@ pub fn run(cmd: &ServerCommand) -> Result<()> {
                     },
                     host: s.host.clone(),
                     ssh_user: s.ssh_user.clone(),
-                }
-            }).collect();
+                })
+                .collect();
             rows.sort_by(|a, b| a.name.cmp(&b.name));
 
             let name_w = rows.iter().map(|r| r.name.len()).max().unwrap_or(4).max(4);
-            let type_w = rows.iter().map(|r| r.server_type.len()).max().unwrap_or(4).max(4);
+            let type_w = rows
+                .iter()
+                .map(|r| r.server_type.len())
+                .max()
+                .unwrap_or(4)
+                .max(4);
             let host_w = rows.iter().map(|r| r.host.len()).max().unwrap_or(4).max(4);
-            let user_w = rows.iter().map(|r| r.ssh_user.len()).max().unwrap_or(4).max(4);
+            let user_w = rows
+                .iter()
+                .map(|r| r.ssh_user.len())
+                .max()
+                .unwrap_or(4)
+                .max(4);
 
             println!(
                 "   {:<2}  {:<name_w$}  {:<type_w$}  {:<host_w$}  {:<user_w$}",
                 " ", "Name", "Type", "Host", "User"
             );
             for row in &rows {
-                let indicator = if row.is_active { theme::yellow("▶") } else { " ".to_string() };
-                let name = if row.is_active { theme::yellow(&row.name) } else { row.name.clone() };
+                let indicator = if row.is_active {
+                    theme::yellow("▶")
+                } else {
+                    " ".to_string()
+                };
+                let name = if row.is_active {
+                    theme::yellow(&row.name)
+                } else {
+                    row.name.clone()
+                };
                 let padding = " ".repeat(name_w - row.name.len());
                 println!(
                     "   {}   {}{padding}  {:<type_w$}  {:<host_w$}  {:<user_w$}",
