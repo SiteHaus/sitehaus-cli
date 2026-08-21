@@ -22,8 +22,10 @@ src/
   config.rs         — read/write ~/.sitehaus/config.yml
   commands/
     server.rs       — sitehaus server add/list/remove
-    db.rs           — sitehaus db seed
-    ops.rs          — sitehaus logs/health/deploy
+    db.rs           — sitehaus db seed/migrate/studio/query/provision
+    ops.rs          — sitehaus logs/ps/restart/health/deploy
+    env.rs          — sitehaus env check/set — reads and writes service env vars on the active server
+    store.rs        — sitehaus store check — validates a store's DB + IAM + live HTTP wiring
     setup.rs        — sitehaus setup (first-run wizard)
   confirm.rs        — shared confirmation prompt helper
   ssh.rs            — SSH command execution helpers
@@ -54,13 +56,23 @@ cargo install --path .
 | `sitehaus server list` | List registered servers |
 | `sitehaus server remove <name>` | Remove a server |
 | `sitehaus db seed` | Seed the database on active server |
+| `sitehaus db migrate` | Run database migrations |
+| `sitehaus db studio` | Open Drizzle Studio via an SSH tunnel |
+| `sitehaus db query <sql>` | Run a SQL query against the active server and print results |
+| `sitehaus db provision <client> --domain --client-key --platform-server [--stripe-account]` | Provision a client store on an ecom server (runs `provision-<client>.ts`) |
+| `sitehaus store check <slug> --platform-server <name>` | Validate a store's DB record, IAM client link, and live HTTP resolution end-to-end |
+| `sitehaus env check` | Report required/optional env vars present on the active server per service, with advisory checks (no-localhost, min secret length, prod dev-redirect, Stripe test-key-in-prod) |
+| `sitehaus env set <KEY=VALUE>` | **Writes** an env var directly into the target service's `.env` file on the active server (SSH) and restarts that service. Prompts for confirmation first. No dry-run mode. |
 | `sitehaus logs [service]` | Stream Docker Compose logs |
+| `sitehaus ps` | Show running containers on the active server |
+| `sitehaus restart [service...]` | Restart one or more services (all services if none given) |
 | `sitehaus health` | Check server health endpoint |
 | `sitehaus deploy` | Pull latest images + restart all services |
 
 ### Log Services
 
-Valid service names: `gateway`, `commerce`, `payments`, `worker`, `caddy`, `postgres`, `redis`
+Ecom servers: `gateway`, `commerce`, `payments`, `worker`, `caddy`, `postgres`, `redis`
+Platform servers: `api`, `web`, `dashboard`, `iam`, `commerce`, `caddy`, `postgres`, `redis`
 
 ## Config Format
 

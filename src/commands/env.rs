@@ -1,128 +1,115 @@
 use crate::config::{ServerType, read_config, resolve_server};
-use crate::ssh::ssh_capture;
+use crate::confirm::confirm;
+use crate::ssh::{ssh_capture, ssh_exec};
 use crate::theme;
 use anyhow::Result;
+use clap::Subcommand;
 use owo_colors::OwoColorize;
 use std::collections::HashMap;
 
+// ─── Subcommands ──────────────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+pub enum EnvCommand {
+    /// Check required env vars on the active server
+    Check,
+    /// Set an env var on the active server (KEY=VALUE)
+    Set {
+        /// Key-value pair to set, e.g. SESSION_SECRET=supersecret
+        pair: String,
+    },
+}
+
+// ─── Check rules ──────────────────────────────────────────────────────────────
+
 struct EnvRule {
     key: &'static str,
-    /// If true, `sitehaus env check` fails when this key is absent
     required: bool,
-    /// Optional validation function — returns an advisory warning string or None
+    container: &'static str,
     check: Option<fn(&str, is_prod: bool) -> Option<String>>,
 }
+
+const GW: &str = "sitehaus-commerce-gateway-1";
+const COM: &str = "sitehaus-commerce-commerce-1";
+const PAY: &str = "sitehaus-commerce-payments-1";
 
 fn rules_for(server_type: &ServerType) -> Vec<EnvRule> {
     match server_type {
         ServerType::Ecom => vec![
-            EnvRule {
-                key: "DATABASE_URL",
-                required: true,
-                check: Some(check_no_localhost),
-            },
-            EnvRule {
-                key: "REDIS_URL",
-                required: true,
-                check: Some(check_no_localhost),
-            },
-            EnvRule {
-                key: "IAM_URL",
-                required: true,
-                check: Some(check_no_localhost),
-            },
-            EnvRule {
-                key: "IAM_CLIENT_KEY",
-                required: true,
-                check: None,
-            },
-            EnvRule {
-                key: "SESSION_SECRET",
-                required: true,
-                check: Some(check_secret_length),
-            },
-            EnvRule {
-                key: "STRIPE_SECRET_KEY",
-                required: false,
-                check: Some(check_stripe_key),
-            },
-            EnvRule {
-                key: "STRIPE_WEBHOOK_SECRET",
-                required: false,
-                check: None,
-            },
-            EnvRule {
-                key: "R2_ACCESS_KEY_ID",
-                required: false,
-                check: None,
-            },
-            EnvRule {
-                key: "R2_SECRET_ACCESS_KEY",
-                required: false,
-                check: None,
-            },
-            EnvRule {
-                key: "R2_BUCKET",
-                required: false,
-                check: None,
-            },
-            EnvRule {
-                key: "R2_ENDPOINT",
-                required: false,
-                check: None,
-            },
-            EnvRule {
-                key: "CDN_BASE_URL",
-                required: false,
-                check: None,
-            },
-            EnvRule {
-                key: "PORT",
-                required: false,
-                check: None,
-            },
+            // ── Gateway ──────────────────────────────────────────────────────
+            EnvRule { key: "DATABASE_URL",          required: true,  container: GW,  check: Some(check_no_localhost) },
+            EnvRule { key: "REDIS_URL",             required: true,  container: GW,  check: Some(check_no_localhost) },
+            EnvRule { key: "IAM_URL",               required: true,  container: GW,  check: Some(check_no_localhost) },
+            EnvRule { key: "IAM_CLIENT_KEY",        required: true,  container: GW,  check: None },
+            EnvRule { key: "SESSION_SECRET",        required: true,  container: GW,  check: Some(check_secret_length) },
+            EnvRule { key: "PORT",                  required: false, container: GW,  check: None },
+            // ── Payments ─────────────────────────────────────────────────────
+            EnvRule { key: "STRIPE_SECRET_KEY",     required: false, container: PAY, check: Some(check_stripe_key) },
+            EnvRule { key: "STRIPE_WEBHOOK_SECRET", required: false, container: PAY, check: None },
+            // ── Commerce ─────────────────────────────────────────────────────
+            EnvRule { key: "R2_ACCESS_KEY_ID",      required: false, container: COM, check: None },
+            EnvRule { key: "R2_SECRET_ACCESS_KEY",  required: false, container: COM, check: None },
+            EnvRule { key: "R2_BUCKET_NAME",        required: false, container: COM, check: None },
+            EnvRule { key: "R2_CDN_URL",            required: false, container: COM, check: None },
+            EnvRule { key: "EMAIL_FROM",            required: true,  container: COM, check: None },
+            EnvRule { key: "EMAIL_DEV_REDIRECT",    required: false, container: COM, check: Some(check_dev_redirect_in_prod) },
+            EnvRule { key: "CORS_ENFORCE",          required: true,  container: GW,  check: Some(check_cors_enforce) },
         ],
         ServerType::Platform => vec![
-            EnvRule {
-                key: "DATABASE_URL",
-                required: true,
-                check: Some(check_no_localhost),
-            },
-            EnvRule {
-                key: "JWT_SECRET",
-                required: true,
-                check: Some(check_secret_length),
-            },
-            EnvRule {
-                key: "ACCESS_TTL_SEC",
-                required: true,
-                check: None,
-            },
-            EnvRule {
-                key: "REFRESH_TTL_SEC",
-                required: true,
-                check: None,
-            },
-            EnvRule {
-                key: "RESEND_API_KEY",
-                required: false,
-                check: None,
-            },
-            EnvRule {
-                key: "COOKIE_DOMAIN",
-                required: false,
-                check: Some(check_no_localhost),
-            },
-            EnvRule {
-                key: "COOKIE_SAME_SITE",
-                required: false,
-                check: None,
-            },
+            EnvRule { key: "DATABASE_URL",    required: true,  container: "sitehaus-api-1", check: Some(check_no_localhost) },
+            EnvRule { key: "JWT_SECRET",      required: true,  container: "sitehaus-api-1", check: Some(check_secret_length) },
+            EnvRule { key: "ACCESS_TTL_SEC",  required: true,  container: "sitehaus-api-1", check: None },
+            EnvRule { key: "REFRESH_TTL_SEC", required: true,  container: "sitehaus-api-1", check: None },
+            EnvRule { key: "RESEND_API_KEY",  required: false, container: "sitehaus-api-1", check: None },
+            EnvRule { key: "COOKIE_DOMAIN",   required: false, container: "sitehaus-api-1", check: Some(check_no_localhost) },
+            EnvRule { key: "COOKIE_SAME_SITE",required: false, container: "sitehaus-api-1", check: None },
         ],
     }
 }
 
-/// Warn if a URL value contains "localhost" or "127.0.0.1"
+// ─── Set targets ──────────────────────────────────────────────────────────────
+
+struct ServiceTarget {
+    label: &'static str,
+    env_file: &'static str,
+    container: &'static str,
+    compose_file: &'static str,
+}
+
+const ECOM_COMPOSE:     &str = "/srv/sitehaus-commerce/docker-compose.prod.yml";
+const PLATFORM_COMPOSE: &str = "/srv/sitehaus/docker-compose.prod.yml";
+
+fn targets_for_key<'a>(key: &str, server_type: &ServerType) -> Vec<ServiceTarget> {
+    match server_type {
+        ServerType::Ecom => match key {
+            "STRIPE_SECRET_KEY" | "STRIPE_WEBHOOK_SECRET" => vec![
+                ServiceTarget { label: "payments", env_file: "/srv/sitehaus-commerce/apps/payments/.env", container: PAY, compose_file: ECOM_COMPOSE },
+            ],
+            "R2_ACCESS_KEY_ID" | "R2_SECRET_ACCESS_KEY" | "R2_BUCKET_NAME"
+            | "R2_CDN_URL" | "R2_ACCOUNT_ID" => vec![
+                ServiceTarget { label: "commerce", env_file: "/srv/sitehaus-commerce/apps/commerce/.env", container: COM, compose_file: ECOM_COMPOSE },
+            ],
+            // EMAIL_FROM and RESEND_API_KEY are consumed by both commerce and worker
+            "EMAIL_FROM" | "RESEND_API_KEY" => vec![
+                ServiceTarget { label: "commerce", env_file: "/srv/sitehaus-commerce/apps/commerce/.env", container: COM, compose_file: ECOM_COMPOSE },
+                ServiceTarget { label: "worker",   env_file: "/srv/sitehaus-commerce/apps/worker/.env",   container: "sitehaus-commerce-worker-1", compose_file: ECOM_COMPOSE },
+            ],
+            "EMAIL_DEV_REDIRECT" => vec![
+                ServiceTarget { label: "worker", env_file: "/srv/sitehaus-commerce/apps/worker/.env", container: "sitehaus-commerce-worker-1", compose_file: ECOM_COMPOSE },
+            ],
+            // Everything else (IAM_URL, IAM_CLIENT_KEY, SESSION_SECRET, DATABASE_URL, REDIS_URL, PORT, …) → gateway
+            _ => vec![
+                ServiceTarget { label: "gateway", env_file: "/srv/sitehaus-commerce/apps/gateway/.env", container: GW, compose_file: ECOM_COMPOSE },
+            ],
+        },
+        ServerType::Platform => vec![
+            ServiceTarget { label: "api", env_file: "/srv/sitehaus/.env", container: "sitehaus-api-1", compose_file: PLATFORM_COMPOSE },
+        ],
+    }
+}
+
+// ─── Advisory checks ──────────────────────────────────────────────────────────
+
 fn check_no_localhost(value: &str, _is_prod: bool) -> Option<String> {
     if value.contains("localhost") || value.contains("127.0.0.1") {
         Some("points to localhost — is this right for a remote server?".to_string())
@@ -131,19 +118,22 @@ fn check_no_localhost(value: &str, _is_prod: bool) -> Option<String> {
     }
 }
 
-/// Warn if a secret is shorter than 32 characters
 fn check_secret_length(value: &str, _is_prod: bool) -> Option<String> {
     if value.len() < 32 {
-        Some(format!(
-            "only {} chars — minimum 32 recommended",
-            value.len()
-        ))
+        Some(format!("only {} chars — minimum 32 recommended", value.len()))
     } else {
         None
     }
 }
 
-/// Warn if a Stripe key looks like a test key on a prod server
+fn check_dev_redirect_in_prod(_value: &str, is_prod: bool) -> Option<String> {
+    if is_prod {
+        Some("set on a production server — all emails will be redirected away from real recipients".to_string())
+    } else {
+        None
+    }
+}
+
 fn check_stripe_key(value: &str, is_prod: bool) -> Option<String> {
     if is_prod && value.starts_with("sk_test_") {
         Some("test key in use on a production server".to_string())
@@ -152,12 +142,20 @@ fn check_stripe_key(value: &str, is_prod: bool) -> Option<String> {
     }
 }
 
-/// Fetch all env vars from the primary app container as a HashMap
+fn check_cors_enforce(value: &str, is_prod: bool) -> Option<String> {
+    if is_prod && value != "true" {
+        Some("CORS is in soak mode on a production server — disallowed origins are permitted, not rejected".to_string())
+    } else {
+        None
+    }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 fn fetch_env(
     server: &crate::config::ServerConfig,
     container: &str,
 ) -> Result<HashMap<String, String>> {
-    // `docker exec <container> env` prints KEY=VALUE lines
     let raw = ssh_capture(server, &format!("docker exec {container} env"))?;
     let mut map = HashMap::new();
     for line in raw.lines() {
@@ -168,50 +166,74 @@ fn fetch_env(
     Ok(map)
 }
 
-pub fn run(server_override: Option<&str>) -> Result<()> {
+fn mask(key: &str, value: &str) -> String {
+    const SECRET_KEYS: &[&str] = &[
+        "DATABASE_URL",
+        "JWT_SECRET",
+        "SESSION_SECRET",
+        "STRIPE_SECRET_KEY",
+        "STRIPE_WEBHOOK_SECRET",
+        "R2_SECRET_ACCESS_KEY",
+        "RESEND_API_KEY",
+    ];
+    if SECRET_KEYS.contains(&key) {
+        let visible = value.chars().take(4).collect::<String>();
+        format!("{visible}{}", "*".repeat(8))
+    } else {
+        value.to_string()
+    }
+}
+
+/// Escape a string for use inside bash single-quotes.
+fn sh_escape(s: &str) -> String {
+    s.replace('\'', "'\\''")
+}
+
+// ─── env check ────────────────────────────────────────────────────────────────
+
+fn run_check(server_override: Option<&str>) -> Result<()> {
     let config = read_config()?;
     let (name, server) = resolve_server(&config, server_override)?;
-
     let is_prod = crate::confirm::is_prod(name);
-
-    let container = match server.server_type {
-        ServerType::Ecom => "sitehaus-commerce-commerce-1",
-        ServerType::Platform => "sitehaus-api-1",
-    };
 
     println!("\nChecking env vars on {}...\n", theme::yellow(name));
 
-    let env = fetch_env(server, container)?;
-    if env.is_empty() {
-        anyhow::bail!("could not read env from container \"{container}\" — is it running?");
-    }
-
     let rules = rules_for(&server.server_type);
 
-    let tick = "✓".green().bold().to_string();
-    let cross = "✗".red().bold().to_string();
-    let warn = "⚠".yellow().bold().to_string();
+    // Collect unique containers and fetch each once
+    let unique_containers: Vec<&str> = {
+        let mut seen = std::collections::HashSet::new();
+        rules.iter().filter_map(|r| {
+            if seen.insert(r.container) { Some(r.container) } else { None }
+        }).collect()
+    };
 
-    let mut missing = 0usize;
+    let mut envs: HashMap<&str, HashMap<String, String>> = HashMap::new();
+    for container in unique_containers {
+        let env = fetch_env(server, container).unwrap_or_default();
+        envs.insert(container, env);
+    }
+
+    let tick  = "✓".green().bold().to_string();
+    let cross = "✗".red().bold().to_string();
+    let warn  = "⚠".yellow().bold().to_string();
+
+    let mut missing  = 0usize;
     let mut warnings = 0usize;
+    let empty_map    = HashMap::new();
 
     for rule in &rules {
+        let env = envs.get(rule.container).unwrap_or(&empty_map);
         match env.get(rule.key) {
             None => {
                 if rule.required {
                     println!("  {cross}  {:<28} {}", rule.key, "missing".red());
                     missing += 1;
                 } else {
-                    println!(
-                        "  {}  {:<28} {}",
-                        "–".dimmed(),
-                        rule.key,
-                        "not set (optional)".dimmed()
-                    );
+                    println!("  {}  {:<28} {}", "–".dimmed(), rule.key, "not set (optional)".dimmed());
                 }
             }
             Some(value) => {
-                // Run the advisory check if one exists
                 if let Some(check_fn) = rule.check {
                     if let Some(msg) = check_fn(value, is_prod) {
                         println!("  {warn}  {:<28} {}", rule.key, msg.yellow());
@@ -219,9 +241,7 @@ pub fn run(server_override: Option<&str>) -> Result<()> {
                         continue;
                     }
                 }
-                // Mask secrets — show first 4 chars then asterisks
-                let display = mask(rule.key, value);
-                println!("  {tick}  {:<28} {}", rule.key, display.dimmed());
+                println!("  {tick}  {:<28} {}", rule.key, mask(rule.key, value).dimmed());
             }
         }
     }
@@ -247,21 +267,74 @@ pub fn run(server_override: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Mask sensitive values: show first 4 chars + asterisks, full value for non-secrets
-fn mask(key: &str, value: &str) -> String {
-    const SECRET_KEYS: &[&str] = &[
-        "DATABASE_URL",
-        "JWT_SECRET",
-        "SESSION_SECRET",
-        "STRIPE_SECRET_KEY",
-        "STRIPE_WEBHOOK_SECRET",
-        "R2_SECRET_ACCESS_KEY",
-        "RESEND_API_KEY",
-    ];
-    if SECRET_KEYS.contains(&key) {
-        let visible = value.chars().take(4).collect::<String>();
-        format!("{visible}{}", "*".repeat(8))
-    } else {
-        value.to_string()
+// ─── env set ──────────────────────────────────────────────────────────────────
+
+fn run_set(pair: &str, server_override: Option<&str>) -> Result<()> {
+    let (key, value) = pair
+        .split_once('=')
+        .ok_or_else(|| anyhow::anyhow!("expected KEY=VALUE format, e.g. SESSION_SECRET=abc123"))?;
+
+    let key   = key.trim();
+    let value = value.trim();
+
+    if key.is_empty() {
+        anyhow::bail!("key cannot be empty");
+    }
+
+    let config = read_config()?;
+    let (name, server) = resolve_server(&config, server_override)?;
+
+    let targets = targets_for_key(key, &server.server_type);
+    let labels: Vec<&str> = targets.iter().map(|t| t.label).collect();
+
+    confirm(&format!(
+        "Set {} on \"{}\" ({})?",
+        theme::yellow(key),
+        theme::yellow(name),
+        labels.join(", "),
+    ))?;
+
+    let ek = sh_escape(key);
+    let ev = sh_escape(value);
+
+    for target in &targets {
+        println!("\n  {} Writing to {}", "→".dimmed(), target.env_file.dimmed());
+
+        // Update-or-append: strip any existing entry then append the new one
+        let write_cmd = format!(
+            "_K='{ek}' && _V='{ev}' && \
+             FILE='{path}' && \
+             mkdir -p \"$(dirname \"$FILE\")\" && \
+             touch \"$FILE\" && \
+             {{ grep -v \"^${{_K}}=\" \"$FILE\" > \"${{FILE}}.tmp\" 2>/dev/null || true; }} && \
+             mv \"${{FILE}}.tmp\" \"$FILE\" && \
+             printf '%s=%s\\n' \"$_K\" \"$_V\" >> \"$FILE\"",
+            path = target.env_file,
+        );
+
+        let code = ssh_exec(server, &write_cmd);
+        if code != 0 {
+            anyhow::bail!("failed to write {} to {} on \"{}\"", key, target.env_file, name);
+        }
+
+        println!("  {} Restarting {}...", "→".dimmed(), target.label.dimmed());
+        ssh_exec(server, &format!(
+            "docker compose -f {} up -d {}",
+            target.compose_file, target.label,
+        ));
+    }
+
+    println!();
+    theme::success(&format!("{} set on \"{}\".", theme::yellow(key), name));
+    println!();
+    Ok(())
+}
+
+// ─── Dispatch ─────────────────────────────────────────────────────────────────
+
+pub fn run(cmd: &EnvCommand, server_override: Option<&str>) -> Result<()> {
+    match cmd {
+        EnvCommand::Check => run_check(server_override),
+        EnvCommand::Set { pair } => run_set(pair, server_override),
     }
 }

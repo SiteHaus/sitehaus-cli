@@ -21,7 +21,7 @@ pub enum DbCommand {
     },
     /// Provision a client store (ecom servers only)
     Provision {
-        /// Client to provision: onehealth
+        /// Client to provision: onehealth, camo
         client: String,
         /// Storefront domain (e.g. onehealthclinics.com)
         #[arg(long)]
@@ -196,7 +196,8 @@ pub fn run(cmd: &DbCommand, server_override: Option<&str>) -> Result<()> {
 
             let script = match client.as_str() {
                 "onehealth" => "provision-onehealth.ts",
-                other => anyhow::bail!("unknown client \"{other}\" — supported: onehealth"),
+                "camo" => "provision-camo.ts",
+                other => anyhow::bail!("unknown client \"{other}\" — supported: onehealth, camo"),
             };
 
             // Resolve the IAM client ID from the platform server

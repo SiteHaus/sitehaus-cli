@@ -7,7 +7,7 @@ mod theme;
 use anyhow::Result;
 use clap::builder::styling::{AnsiColor, Color, Effects, RgbColor, Style, Styles};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
-use commands::{db::DbCommand, ops::OpsCommand, server::ServerCommand, store::StoreCommand};
+use commands::{db::DbCommand, env::EnvCommand, ops::OpsCommand, server::ServerCommand, store::StoreCommand};
 use owo_colors::OwoColorize;
 
 #[derive(Parser)]
@@ -54,8 +54,11 @@ enum Command {
         #[command(subcommand)]
         cmd: StoreCommand,
     },
-    /// Check required env vars on the active server
-    EnvCheck,
+    /// Manage environment variables on the active server
+    Env {
+        #[command(subcommand)]
+        cmd: EnvCommand,
+    },
     /// Stream service logs
     Logs {
         /// Service name (ecom: gateway, commerce, payments, worker, caddy, postgres, redis)
@@ -140,7 +143,7 @@ fn main() -> Result<()> {
 
         Command::Store { cmd } => commands::store::run(cmd, server_override)?,
 
-        Command::EnvCheck => commands::env::run(server_override)?,
+        Command::Env { cmd } => commands::env::run(cmd, server_override)?,
 
         Command::Logs { service } => commands::ops::run(
             &OpsCommand::Logs {

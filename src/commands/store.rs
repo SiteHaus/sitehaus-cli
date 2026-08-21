@@ -106,7 +106,7 @@ pub fn run(cmd: &StoreCommand, server_override: Option<&str>) -> Result<()> {
 
             let client_row = psql_capture(
                 platform,
-                &format!("SELECT id, key, is_active FROM clients WHERE id = '{store_client_id}'"),
+                &format!("SELECT id, key FROM clients WHERE id = '{store_client_id}'"),
             )?;
 
             if client_row.trim().is_empty() {
@@ -123,49 +123,35 @@ pub fn run(cmd: &StoreCommand, server_override: Option<&str>) -> Result<()> {
                 return Ok(());
             }
 
-            let parts: Vec<&str> = client_row.trim().splitn(3, '|').collect();
-            let (iam_client_id, client_key, client_active_raw) = match parts.as_slice() {
-                [id, key, active] => (*id, *key, *active),
+            let parts: Vec<&str> = client_row.trim().splitn(2, '|').collect();
+            let client_key = match parts.as_slice() {
+                [_id, key] => *key,
                 _ => anyhow::bail!("unexpected client query output: {client_row}"),
             };
 
-            let ids_match = iam_client_id == store_client_id;
-            if ids_match {
-                println!("  {tick}  {:<24} key={}", "client found", client_key.bold());
-            } else {
-                println!(
-                    "  {cross}  {:<24} commerce={store_client_id} / IAM={iam_client_id}",
-                    "client_id mismatch"
-                );
-                all_ok = false;
-            }
-
-            let is_active = client_active_raw == "t" || client_active_raw == "true";
-            if is_active {
-                println!("  {tick}  {:<24} true", "client active");
-            } else {
-                println!(
-                    "  {warn}  {:<24} false — client is disabled in IAM",
-                    "client active"
-                );
-                all_ok = false;
-            }
+            println!("  {tick}  {:<24} key={}", "client found", client_key.bold());
             println!();
 
             // ── Step 3: Live HTTP resolution ────────────────────────────────────
             println!("  {} Live HTTP", "→".dimmed());
 
-            // SSH curl through the gateway internally — /v1/products goes through
-            // StoreResolutionMiddleware (unlike the raw Express /health handler).
+            // curl through the gateway via docker exec on the commerce container —
+            // the gateway is on the internal Docker network (not exposed to the host).
+            // /v1/products goes through StoreResolutionMiddleware.
             // Expected results:
             //   401/403 → store resolved, auth guard ran next (correct)
             //   200     → store resolved, products returned
             //   404 + "Store not found" → middleware rejected the slug
+            // wget is available in the gateway container (used by healthcheck).
+            // -S prints response headers to stderr; we capture both streams and parse the status.
             let curl_cmd = format!(
-                "STATUS=$(curl -s -o /tmp/sh-store-check.json -w '%{{http_code}}' \
-                   -H 'X-Store-Slug: {slug}' http://localhost:7020/v1/products); \
+                "docker exec sitehaus-commerce-gateway-1 sh -c \
+                 'RESP=$(wget -q -S -O /tmp/sh-store-check.json \
+                   --header=\"X-Store-Slug: {slug}\" \
+                   http://localhost:7020/v1/catalog/products 2>&1); \
+                 STATUS=$(echo \"$RESP\" | grep \"HTTP/\" | tail -1 | awk \"{{print \\$2}}\"); \
                  BODY=$(cat /tmp/sh-store-check.json 2>/dev/null); \
-                 echo \"$STATUS $BODY\""
+                 echo \"${{STATUS:-000}} $BODY\"'"
             );
 
             let result = ssh_capture(ecom_server, &curl_cmd)?;
