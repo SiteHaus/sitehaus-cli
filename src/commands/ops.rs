@@ -31,6 +31,7 @@ pub enum OpsCommand {
 pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
     let config = read_config()?;
     let (name, server) = resolve_server(&config, server_override)?;
+    let is_prod = crate::confirm::is_prod(name);
 
     match cmd {
         OpsCommand::Logs { service } => {
@@ -67,7 +68,10 @@ pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
                             }
                             format!("docker logs sitehaus-{svc}-1 --tail 50 -f")
                         }
-                        None => "cd /srv/sitehaus && docker compose -f docker-compose.staging.yml logs -f".to_string(),
+                        None => {
+                            let compose_file = if is_prod { "docker-compose.prod.yml" } else { "docker-compose.staging.yml" };
+                            format!("cd /srv/sitehaus && docker compose -f {compose_file} logs -f")
+                        }
                     }
                 }
             };
@@ -84,8 +88,16 @@ pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
         }
 
         OpsCommand::Restart { services } => {
+            // sitehaus-commerce deploys ONE compose file to both commerce-prod and
+            // commerce-staging (see .github/workflows/cd.yml), so Ecom needs no
+            // is_prod branch. sitehaus deploys TWO — docker-compose.staging.yml to
+            // sitehaus-staging, docker-compose.prod.yml to sitehaus-prod — so
+            // Platform must branch, or a no-args restart against prod would run
+            // staging's compose file (different image tags, different topology)
+            // against the production containers.
             let (compose_file, repo) = match server.server_type {
                 ServerType::Ecom => ("docker-compose.prod.yml", "/srv/sitehaus-commerce"),
+                ServerType::Platform if is_prod => ("docker-compose.prod.yml", "/srv/sitehaus"),
                 ServerType::Platform => ("docker-compose.staging.yml", "/srv/sitehaus"),
             };
 

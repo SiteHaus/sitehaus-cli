@@ -76,10 +76,24 @@ struct ServiceTarget {
     compose_file: &'static str,
 }
 
-const ECOM_COMPOSE:     &str = "/srv/sitehaus-commerce/docker-compose.prod.yml";
-const PLATFORM_COMPOSE: &str = "/srv/sitehaus/docker-compose.prod.yml";
+// sitehaus-commerce deploys the SAME docker-compose.prod.yml to both
+// commerce-prod and commerce-staging (see .github/workflows/cd.yml) — no
+// staging-specific compose file exists there, so one constant is correct.
+const ECOM_COMPOSE: &str = "/srv/sitehaus-commerce/docker-compose.prod.yml";
 
-fn targets_for_key<'a>(key: &str, server_type: &ServerType) -> Vec<ServiceTarget> {
+// sitehaus, unlike sitehaus-commerce, deploys TWO DIFFERENT compose files —
+// docker-compose.staging.yml to sitehaus-staging, docker-compose.prod.yml to
+// sitehaus-prod (see .github/workflows/cd.yml stages 2 and 5). They're not
+// interchangeable: staging's `commerce` service has no env_file at all
+// (it's a build-time-baked Next.js frontend there), while prod's declares
+// `./apps/commerce/.env`. Running the prod compose file against the staging
+// box makes `docker compose up -d <anything>` try to parse prod's full
+// service list — including that env_file prod expects but staging never
+// created — and fail before the target service even restarts.
+const PLATFORM_COMPOSE_PROD:    &str = "/srv/sitehaus/docker-compose.prod.yml";
+const PLATFORM_COMPOSE_STAGING: &str = "/srv/sitehaus/docker-compose.staging.yml";
+
+fn targets_for_key<'a>(key: &str, server_type: &ServerType, is_prod: bool) -> Vec<ServiceTarget> {
     match server_type {
         ServerType::Ecom => match key {
             "STRIPE_SECRET_KEY" | "STRIPE_WEBHOOK_SECRET" => vec![
@@ -102,9 +116,24 @@ fn targets_for_key<'a>(key: &str, server_type: &ServerType) -> Vec<ServiceTarget
                 ServiceTarget { label: "gateway", env_file: "/srv/sitehaus-commerce/apps/gateway/.env", container: GW, compose_file: ECOM_COMPOSE },
             ],
         },
-        ServerType::Platform => vec![
-            ServiceTarget { label: "api", env_file: "/srv/sitehaus/.env", container: "sitehaus-api-1", compose_file: PLATFORM_COMPOSE },
-        ],
+        ServerType::Platform => {
+            let compose_file = if is_prod { PLATFORM_COMPOSE_PROD } else { PLATFORM_COMPOSE_STAGING };
+            match key {
+                // Consumed independently by both apps/api's EmailService and
+                // apps/lighthaus-api's DispatcherService — each reads its own
+                // env file, so both need the write.
+                "EMAIL_DEV_REDIRECT" | "EMAIL_ENABLED" | "RESEND_API_KEY"
+                | "EMAIL_FROM" | "OPS_RECIPIENTS" => vec![
+                    ServiceTarget { label: "api", env_file: "/srv/sitehaus/apps/api/.env", container: "sitehaus-api-1", compose_file },
+                    ServiceTarget { label: "lighthaus-api", env_file: "/srv/sitehaus/apps/lighthaus-api/.env", container: "sitehaus-lighthaus-api-1", compose_file },
+                ],
+                // Everything else (JWT_SECRET, ACCESS_TTL_SEC, DATABASE_URL,
+                // COOKIE_DOMAIN, …) is api-only, matching rules_for's manifest.
+                _ => vec![
+                    ServiceTarget { label: "api", env_file: "/srv/sitehaus/apps/api/.env", container: "sitehaus-api-1", compose_file },
+                ],
+            }
+        }
     }
 }
 
@@ -283,8 +312,9 @@ fn run_set(pair: &str, server_override: Option<&str>) -> Result<()> {
 
     let config = read_config()?;
     let (name, server) = resolve_server(&config, server_override)?;
+    let is_prod = crate::confirm::is_prod(name);
 
-    let targets = targets_for_key(key, &server.server_type);
+    let targets = targets_for_key(key, &server.server_type, is_prod);
     let labels: Vec<&str> = targets.iter().map(|t| t.label).collect();
 
     confirm(&format!(
@@ -296,6 +326,7 @@ fn run_set(pair: &str, server_override: Option<&str>) -> Result<()> {
 
     let ek = sh_escape(key);
     let ev = sh_escape(value);
+    let mut restart_failures: Vec<&str> = Vec::new();
 
     for target in &targets {
         println!("\n  {} Writing to {}", "→".dimmed(), target.env_file.dimmed());
@@ -318,14 +349,30 @@ fn run_set(pair: &str, server_override: Option<&str>) -> Result<()> {
         }
 
         println!("  {} Restarting {}...", "→".dimmed(), target.label.dimmed());
-        ssh_exec(server, &format!(
+        let restart_code = ssh_exec(server, &format!(
             "docker compose -f {} up -d {}",
             target.compose_file, target.label,
         ));
+        if restart_code != 0 {
+            theme::error(&format!(
+                "restart of \"{}\" failed (exit {restart_code}) — the value is written to {}, \
+                 but the running container has not picked it up",
+                target.label, target.env_file,
+            ));
+            restart_failures.push(target.label);
+        }
     }
 
     println!();
-    theme::success(&format!("{} set on \"{}\".", theme::yellow(key), name));
+    if restart_failures.is_empty() {
+        theme::success(&format!("{} set on \"{}\".", theme::yellow(key), name));
+    } else {
+        theme::error(&format!(
+            "{} written on \"{}\", but {} did not restart — value is not live yet. \
+             Investigate and restart manually: sitehaus restart {} --server {}",
+            theme::yellow(key), name, restart_failures.join(", "), restart_failures.join(" "), name,
+        ));
+    }
     println!();
     Ok(())
 }
@@ -336,5 +383,62 @@ pub fn run(cmd: &EnvCommand, server_override: Option<&str>) -> Result<()> {
     match cmd {
         EnvCommand::Check => run_check(server_override),
         EnvCommand::Set { pair } => run_set(pair, server_override),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_email_keys_target_both_api_and_lighthaus_api() {
+        for key in ["EMAIL_DEV_REDIRECT", "EMAIL_ENABLED", "RESEND_API_KEY", "EMAIL_FROM", "OPS_RECIPIENTS"] {
+            let targets = targets_for_key(key, &ServerType::Platform, true);
+            let labels: Vec<&str> = targets.iter().map(|t| t.label).collect();
+            assert_eq!(labels, vec!["api", "lighthaus-api"], "key {key} on prod");
+
+            let targets = targets_for_key(key, &ServerType::Platform, false);
+            let labels: Vec<&str> = targets.iter().map(|t| t.label).collect();
+            assert_eq!(labels, vec!["api", "lighthaus-api"], "key {key} on staging");
+        }
+    }
+
+    #[test]
+    fn platform_other_keys_target_api_only() {
+        let targets = targets_for_key("JWT_SECRET", &ServerType::Platform, true);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].label, "api");
+    }
+
+    #[test]
+    fn platform_api_env_file_matches_what_both_compose_files_actually_declare() {
+        // Both docker-compose.prod.yml and docker-compose.staging.yml declare
+        // `api`'s env_file as ./apps/api/.env — never a bare root .env.
+        for is_prod in [true, false] {
+            let targets = targets_for_key("JWT_SECRET", &ServerType::Platform, is_prod);
+            assert_eq!(targets[0].env_file, "/srv/sitehaus/apps/api/.env");
+        }
+    }
+
+    #[test]
+    fn platform_compose_file_is_environment_specific() {
+        let prod = targets_for_key("JWT_SECRET", &ServerType::Platform, true);
+        assert_eq!(prod[0].compose_file, "/srv/sitehaus/docker-compose.prod.yml");
+
+        let staging = targets_for_key("JWT_SECRET", &ServerType::Platform, false);
+        assert_eq!(staging[0].compose_file, "/srv/sitehaus/docker-compose.staging.yml");
+
+        // The two must actually differ — this is the regression the bug shipped as:
+        // both branches silently resolving to the same hardcoded file.
+        assert_ne!(prod[0].compose_file, staging[0].compose_file);
+    }
+
+    #[test]
+    fn ecom_compose_file_is_the_same_regardless_of_environment() {
+        // sitehaus-commerce deploys ONE compose file to both commerce-prod and
+        // commerce-staging — unlike Platform, there's no is_prod branch to get wrong.
+        let prod = targets_for_key("STRIPE_SECRET_KEY", &ServerType::Ecom, true);
+        let staging = targets_for_key("STRIPE_SECRET_KEY", &ServerType::Ecom, false);
+        assert_eq!(prod[0].compose_file, staging[0].compose_file);
     }
 }
