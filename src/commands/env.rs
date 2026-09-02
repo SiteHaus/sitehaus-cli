@@ -137,6 +137,21 @@ fn targets_for_key<'a>(key: &str, server_type: &ServerType, is_prod: bool) -> Ve
     }
 }
 
+// Ecom deploys the SAME compose file to both prod and staging (see
+// ECOM_COMPOSE above), differentiated only by IMAGE_TAG — the CD pipeline's
+// own deploy script sets this explicitly before every compose invocation.
+// `docker compose up -d` re-resolves ${IMAGE_TAG:-latest}, so without it a
+// staging restart silently pulls the PRODUCTION image (the compose file's
+// fallback default is "latest").
+fn restart_command(compose_file: &str, label: &str, server_type: &ServerType, is_prod: bool) -> String {
+    let image_tag_prefix = if matches!(server_type, ServerType::Ecom) && !is_prod {
+        "IMAGE_TAG=staging "
+    } else {
+        ""
+    };
+    format!("{image_tag_prefix}docker compose -f {compose_file} up -d {label}")
+}
+
 // ─── Advisory checks ──────────────────────────────────────────────────────────
 
 fn check_no_localhost(value: &str, _is_prod: bool) -> Option<String> {
@@ -349,10 +364,10 @@ fn run_set(pair: &str, server_override: Option<&str>) -> Result<()> {
         }
 
         println!("  {} Restarting {}...", "→".dimmed(), target.label.dimmed());
-        let restart_code = ssh_exec(server, &format!(
-            "docker compose -f {} up -d {}",
-            target.compose_file, target.label,
-        ));
+        let restart_code = ssh_exec(
+            server,
+            &restart_command(target.compose_file, target.label, &server.server_type, is_prod),
+        );
         if restart_code != 0 {
             theme::error(&format!(
                 "restart of \"{}\" failed (exit {restart_code}) — the value is written to {}, \
@@ -440,5 +455,37 @@ mod tests {
         let prod = targets_for_key("STRIPE_SECRET_KEY", &ServerType::Ecom, true);
         let staging = targets_for_key("STRIPE_SECRET_KEY", &ServerType::Ecom, false);
         assert_eq!(prod[0].compose_file, staging[0].compose_file);
+    }
+
+    #[test]
+    fn ecom_staging_restart_pins_the_staging_image_tag() {
+        // Regression: `docker compose up -d` re-resolves ${IMAGE_TAG:-latest}.
+        // Without an explicit export here, a staging restart silently pulled
+        // the production image — this is exactly the bug that broke store
+        // resolution on commerce-staging.
+        let cmd = restart_command(ECOM_COMPOSE, "gateway", &ServerType::Ecom, false);
+        assert!(
+            cmd.starts_with("IMAGE_TAG=staging "),
+            "expected staging restart to pin IMAGE_TAG, got: {cmd}"
+        );
+        assert!(cmd.contains(&format!("docker compose -f {ECOM_COMPOSE} up -d gateway")));
+    }
+
+    #[test]
+    fn ecom_prod_restart_leaves_image_tag_unset() {
+        // Prod has no IMAGE_TAG var at all, so the compose file's own fallback
+        // (":latest") is what should apply — no prefix here.
+        let cmd = restart_command(ECOM_COMPOSE, "gateway", &ServerType::Ecom, true);
+        assert!(!cmd.contains("IMAGE_TAG"), "expected no IMAGE_TAG override on prod, got: {cmd}");
+    }
+
+    #[test]
+    fn platform_restart_never_touches_image_tag() {
+        // Platform's two compose files hardcode their tags directly (no
+        // ${IMAGE_TAG} substitution at all), so this prefix is Ecom-only.
+        for is_prod in [true, false] {
+            let cmd = restart_command(PLATFORM_COMPOSE_PROD, "api", &ServerType::Platform, is_prod);
+            assert!(!cmd.contains("IMAGE_TAG"), "is_prod={is_prod}: {cmd}");
+        }
     }
 }

@@ -28,6 +28,28 @@ pub enum OpsCommand {
     Deploy,
 }
 
+// Ecom deploys the SAME compose file to both prod and staging (see
+// env.rs's ECOM_COMPOSE), differentiated only by IMAGE_TAG — the CD
+// pipeline's own deploy script sets this explicitly. Without exporting it
+// here, `pull`/`up -d` on a staging box resolves ${IMAGE_TAG:-latest} and
+// silently deploys the PRODUCTION image.
+fn ecom_deploy_command(is_prod: bool) -> &'static str {
+    if is_prod {
+        "cd /srv/sitehaus-commerce && \
+         docker compose -f docker-compose.prod.yml pull && \
+         docker compose -f docker-compose.prod.yml up -d --remove-orphans && \
+         docker compose -f docker-compose.prod.yml restart caddy && \
+         docker image prune -f"
+    } else {
+        "cd /srv/sitehaus-commerce && \
+         export IMAGE_TAG=staging && \
+         docker compose -f docker-compose.prod.yml pull && \
+         docker compose -f docker-compose.prod.yml up -d --remove-orphans && \
+         docker compose -f docker-compose.prod.yml restart caddy && \
+         docker image prune -f"
+    }
+}
+
 pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
     let config = read_config()?;
     let (name, server) = resolve_server(&config, server_override)?;
@@ -169,13 +191,7 @@ pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
             ))?;
             println!("Deploying to {}...", theme::yellow(name));
             let cmd = match server.server_type {
-                ServerType::Ecom => {
-                    "cd /srv/sitehaus-commerce && \
-                     docker compose -f docker-compose.prod.yml pull && \
-                     docker compose -f docker-compose.prod.yml up -d --remove-orphans && \
-                     docker compose -f docker-compose.prod.yml restart caddy && \
-                     docker image prune -f"
-                }
+                ServerType::Ecom => ecom_deploy_command(is_prod),
                 ServerType::Platform => {
                     "cd /srv/sitehaus && \
                      git pull origin main && \
@@ -190,4 +206,23 @@ pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ecom_staging_deploy_pins_the_staging_image_tag() {
+        // Regression: without this export, `pull`/`up -d` on a staging box
+        // resolves ${IMAGE_TAG:-latest} and silently deploys production images.
+        let cmd = ecom_deploy_command(false);
+        assert!(cmd.contains("export IMAGE_TAG=staging"), "got: {cmd}");
+    }
+
+    #[test]
+    fn ecom_prod_deploy_leaves_image_tag_unset() {
+        let cmd = ecom_deploy_command(true);
+        assert!(!cmd.contains("IMAGE_TAG"), "expected no IMAGE_TAG override on prod, got: {cmd}");
+    }
 }
