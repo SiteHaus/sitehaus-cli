@@ -76,10 +76,14 @@ struct ServiceTarget {
     compose_file: &'static str,
 }
 
-// sitehaus-commerce deploys the SAME docker-compose.prod.yml to both
-// commerce-prod and commerce-staging (see .github/workflows/cd.yml) — no
-// staging-specific compose file exists there, so one constant is correct.
-const ECOM_COMPOSE: &str = "/srv/sitehaus-commerce/docker-compose.prod.yml";
+// sitehaus-commerce deploys TWO DIFFERENT compose files — docker-compose.
+// staging.yml to commerce-staging, docker-compose.prod.yml to commerce-prod
+// (see .github/workflows/cd.yml) — same split as Platform below. Every image
+// line in each file hardcodes its own tag (:staging / :latest) directly, no
+// ${IMAGE_TAG} substitution involved, so there's no env-var trick to get
+// wrong: picking the right file is the whole story.
+const ECOM_COMPOSE_PROD:    &str = "/srv/sitehaus-commerce/docker-compose.prod.yml";
+const ECOM_COMPOSE_STAGING: &str = "/srv/sitehaus-commerce/docker-compose.staging.yml";
 
 // sitehaus, unlike sitehaus-commerce, deploys TWO DIFFERENT compose files —
 // docker-compose.staging.yml to sitehaus-staging, docker-compose.prod.yml to
@@ -95,27 +99,30 @@ const PLATFORM_COMPOSE_STAGING: &str = "/srv/sitehaus/docker-compose.staging.yml
 
 fn targets_for_key<'a>(key: &str, server_type: &ServerType, is_prod: bool) -> Vec<ServiceTarget> {
     match server_type {
-        ServerType::Ecom => match key {
+        ServerType::Ecom => {
+            let compose_file = if is_prod { ECOM_COMPOSE_PROD } else { ECOM_COMPOSE_STAGING };
+            match key {
             "STRIPE_SECRET_KEY" | "STRIPE_WEBHOOK_SECRET" => vec![
-                ServiceTarget { label: "payments", env_file: "/srv/sitehaus-commerce/apps/payments/.env", container: PAY, compose_file: ECOM_COMPOSE },
+                ServiceTarget { label: "payments", env_file: "/srv/sitehaus-commerce/apps/payments/.env", container: PAY, compose_file },
             ],
             "R2_ACCESS_KEY_ID" | "R2_SECRET_ACCESS_KEY" | "R2_BUCKET_NAME"
             | "R2_CDN_URL" | "R2_ACCOUNT_ID" => vec![
-                ServiceTarget { label: "commerce", env_file: "/srv/sitehaus-commerce/apps/commerce/.env", container: COM, compose_file: ECOM_COMPOSE },
+                ServiceTarget { label: "commerce", env_file: "/srv/sitehaus-commerce/apps/commerce/.env", container: COM, compose_file },
             ],
             // EMAIL_FROM and RESEND_API_KEY are consumed by both commerce and worker
             "EMAIL_FROM" | "RESEND_API_KEY" => vec![
-                ServiceTarget { label: "commerce", env_file: "/srv/sitehaus-commerce/apps/commerce/.env", container: COM, compose_file: ECOM_COMPOSE },
-                ServiceTarget { label: "worker",   env_file: "/srv/sitehaus-commerce/apps/worker/.env",   container: "sitehaus-commerce-worker-1", compose_file: ECOM_COMPOSE },
+                ServiceTarget { label: "commerce", env_file: "/srv/sitehaus-commerce/apps/commerce/.env", container: COM, compose_file },
+                ServiceTarget { label: "worker",   env_file: "/srv/sitehaus-commerce/apps/worker/.env",   container: "sitehaus-commerce-worker-1", compose_file },
             ],
             "EMAIL_DEV_REDIRECT" => vec![
-                ServiceTarget { label: "worker", env_file: "/srv/sitehaus-commerce/apps/worker/.env", container: "sitehaus-commerce-worker-1", compose_file: ECOM_COMPOSE },
+                ServiceTarget { label: "worker", env_file: "/srv/sitehaus-commerce/apps/worker/.env", container: "sitehaus-commerce-worker-1", compose_file },
             ],
             // Everything else (IAM_URL, IAM_CLIENT_KEY, SESSION_SECRET, DATABASE_URL, REDIS_URL, PORT, …) → gateway
             _ => vec![
-                ServiceTarget { label: "gateway", env_file: "/srv/sitehaus-commerce/apps/gateway/.env", container: GW, compose_file: ECOM_COMPOSE },
+                ServiceTarget { label: "gateway", env_file: "/srv/sitehaus-commerce/apps/gateway/.env", container: GW, compose_file },
             ],
-        },
+            }
+        }
         ServerType::Platform => {
             let compose_file = if is_prod { PLATFORM_COMPOSE_PROD } else { PLATFORM_COMPOSE_STAGING };
             match key {
@@ -137,19 +144,8 @@ fn targets_for_key<'a>(key: &str, server_type: &ServerType, is_prod: bool) -> Ve
     }
 }
 
-// Ecom deploys the SAME compose file to both prod and staging (see
-// ECOM_COMPOSE above), differentiated only by IMAGE_TAG — the CD pipeline's
-// own deploy script sets this explicitly before every compose invocation.
-// `docker compose up -d` re-resolves ${IMAGE_TAG:-latest}, so without it a
-// staging restart silently pulls the PRODUCTION image (the compose file's
-// fallback default is "latest").
-fn restart_command(compose_file: &str, label: &str, server_type: &ServerType, is_prod: bool) -> String {
-    let image_tag_prefix = if matches!(server_type, ServerType::Ecom) && !is_prod {
-        "IMAGE_TAG=staging "
-    } else {
-        ""
-    };
-    format!("{image_tag_prefix}docker compose -f {compose_file} up -d {label}")
+fn restart_command(compose_file: &str, label: &str) -> String {
+    format!("docker compose -f {compose_file} up -d {label}")
 }
 
 // ─── Advisory checks ──────────────────────────────────────────────────────────
@@ -366,7 +362,7 @@ fn run_set(pair: &str, server_override: Option<&str>) -> Result<()> {
         println!("  {} Restarting {}...", "→".dimmed(), target.label.dimmed());
         let restart_code = ssh_exec(
             server,
-            &restart_command(target.compose_file, target.label, &server.server_type, is_prod),
+            &restart_command(target.compose_file, target.label),
         );
         if restart_code != 0 {
             theme::error(&format!(
@@ -449,43 +445,32 @@ mod tests {
     }
 
     #[test]
-    fn ecom_compose_file_is_the_same_regardless_of_environment() {
-        // sitehaus-commerce deploys ONE compose file to both commerce-prod and
-        // commerce-staging — unlike Platform, there's no is_prod branch to get wrong.
+    fn ecom_compose_file_is_environment_specific() {
+        // Regression: sitehaus-commerce used to deploy ONE compose file to
+        // both commerce-prod and commerce-staging, differentiated only by an
+        // IMAGE_TAG env var threaded through every compose invocation. That
+        // was the exact bug that broke store resolution on commerce-staging —
+        // a restart that didn't set IMAGE_TAG silently pulled production's
+        // image. Now each environment has its own file with hardcoded tags,
+        // same as Platform — no env var to forget.
         let prod = targets_for_key("STRIPE_SECRET_KEY", &ServerType::Ecom, true);
+        assert_eq!(prod[0].compose_file, ECOM_COMPOSE_PROD);
+
         let staging = targets_for_key("STRIPE_SECRET_KEY", &ServerType::Ecom, false);
-        assert_eq!(prod[0].compose_file, staging[0].compose_file);
+        assert_eq!(staging[0].compose_file, ECOM_COMPOSE_STAGING);
+
+        assert_ne!(prod[0].compose_file, staging[0].compose_file);
     }
 
     #[test]
-    fn ecom_staging_restart_pins_the_staging_image_tag() {
-        // Regression: `docker compose up -d` re-resolves ${IMAGE_TAG:-latest}.
-        // Without an explicit export here, a staging restart silently pulled
-        // the production image — this is exactly the bug that broke store
-        // resolution on commerce-staging.
-        let cmd = restart_command(ECOM_COMPOSE, "gateway", &ServerType::Ecom, false);
-        assert!(
-            cmd.starts_with("IMAGE_TAG=staging "),
-            "expected staging restart to pin IMAGE_TAG, got: {cmd}"
+    fn restart_command_targets_the_given_compose_file_and_service() {
+        assert_eq!(
+            restart_command(ECOM_COMPOSE_STAGING, "gateway"),
+            format!("docker compose -f {ECOM_COMPOSE_STAGING} up -d gateway"),
         );
-        assert!(cmd.contains(&format!("docker compose -f {ECOM_COMPOSE} up -d gateway")));
-    }
-
-    #[test]
-    fn ecom_prod_restart_leaves_image_tag_unset() {
-        // Prod has no IMAGE_TAG var at all, so the compose file's own fallback
-        // (":latest") is what should apply — no prefix here.
-        let cmd = restart_command(ECOM_COMPOSE, "gateway", &ServerType::Ecom, true);
-        assert!(!cmd.contains("IMAGE_TAG"), "expected no IMAGE_TAG override on prod, got: {cmd}");
-    }
-
-    #[test]
-    fn platform_restart_never_touches_image_tag() {
-        // Platform's two compose files hardcode their tags directly (no
-        // ${IMAGE_TAG} substitution at all), so this prefix is Ecom-only.
-        for is_prod in [true, false] {
-            let cmd = restart_command(PLATFORM_COMPOSE_PROD, "api", &ServerType::Platform, is_prod);
-            assert!(!cmd.contains("IMAGE_TAG"), "is_prod={is_prod}: {cmd}");
-        }
+        assert_eq!(
+            restart_command(PLATFORM_COMPOSE_PROD, "api"),
+            format!("docker compose -f {PLATFORM_COMPOSE_PROD} up -d api"),
+        );
     }
 }

@@ -28,26 +28,34 @@ pub enum OpsCommand {
     Deploy,
 }
 
-// Ecom deploys the SAME compose file to both prod and staging (see
-// env.rs's ECOM_COMPOSE), differentiated only by IMAGE_TAG — the CD
-// pipeline's own deploy script sets this explicitly. Without exporting it
-// here, `pull`/`up -d` on a staging box resolves ${IMAGE_TAG:-latest} and
-// silently deploys the PRODUCTION image.
-fn ecom_deploy_command(is_prod: bool) -> &'static str {
-    if is_prod {
+// Ecom deploys TWO different compose files — docker-compose.staging.yml to
+// commerce-staging, docker-compose.prod.yml to commerce-prod (see env.rs's
+// ECOM_COMPOSE_PROD/ECOM_COMPOSE_STAGING) — same split as Platform below.
+// Each file hardcodes its own image tags, so picking the right file is the
+// whole story; no IMAGE_TAG env var to remember.
+fn ecom_deploy_command(is_prod: bool) -> String {
+    let compose_file = if is_prod { "docker-compose.prod.yml" } else { "docker-compose.staging.yml" };
+    format!(
         "cd /srv/sitehaus-commerce && \
-         docker compose -f docker-compose.prod.yml pull && \
-         docker compose -f docker-compose.prod.yml up -d --remove-orphans && \
-         docker compose -f docker-compose.prod.yml restart caddy && \
+         docker compose -f {compose_file} pull && \
+         docker compose -f {compose_file} up -d --remove-orphans && \
+         docker compose -f {compose_file} restart caddy && \
          docker image prune -f"
-    } else {
-        "cd /srv/sitehaus-commerce && \
-         export IMAGE_TAG=staging && \
-         docker compose -f docker-compose.prod.yml pull && \
-         docker compose -f docker-compose.prod.yml up -d --remove-orphans && \
-         docker compose -f docker-compose.prod.yml restart caddy && \
+    )
+}
+
+// Previously always ran docker-compose.staging.yml regardless of target —
+// `sitehaus deploy --server sitehaus-prod` would deploy staging's compose
+// file (different image tags, different topology) onto prod's containers.
+fn platform_deploy_command(is_prod: bool) -> String {
+    let compose_file = if is_prod { "docker-compose.prod.yml" } else { "docker-compose.staging.yml" };
+    format!(
+        "cd /srv/sitehaus && \
+         git pull origin main && \
+         docker compose -f {compose_file} pull && \
+         docker compose -f {compose_file} up -d --remove-orphans && \
          docker image prune -f"
-    }
+    )
 }
 
 pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
@@ -69,7 +77,10 @@ pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
                             }
                             format!("docker logs sitehaus-commerce-{svc}-1 --tail 50 -f")
                         }
-                        None => "cd /srv/sitehaus-commerce && docker compose -f docker-compose.prod.yml logs -f".to_string(),
+                        None => {
+                            let compose_file = if is_prod { "docker-compose.prod.yml" } else { "docker-compose.staging.yml" };
+                            format!("cd /srv/sitehaus-commerce && docker compose -f {compose_file} logs -f")
+                        }
                     }
                 }
                 ServerType::Platform => {
@@ -110,15 +121,14 @@ pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
         }
 
         OpsCommand::Restart { services } => {
-            // sitehaus-commerce deploys ONE compose file to both commerce-prod and
-            // commerce-staging (see .github/workflows/cd.yml), so Ecom needs no
-            // is_prod branch. sitehaus deploys TWO — docker-compose.staging.yml to
-            // sitehaus-staging, docker-compose.prod.yml to sitehaus-prod — so
-            // Platform must branch, or a no-args restart against prod would run
-            // staging's compose file (different image tags, different topology)
-            // against the production containers.
+            // Both Ecom and Platform deploy TWO different compose files —
+            // docker-compose.staging.yml to the staging box, docker-compose.
+            // prod.yml to prod — so both must branch on is_prod, or a no-args
+            // restart against prod would run staging's compose file (different
+            // image tags, different topology) against the production containers.
             let (compose_file, repo) = match server.server_type {
-                ServerType::Ecom => ("docker-compose.prod.yml", "/srv/sitehaus-commerce"),
+                ServerType::Ecom if is_prod => ("docker-compose.prod.yml", "/srv/sitehaus-commerce"),
+                ServerType::Ecom => ("docker-compose.staging.yml", "/srv/sitehaus-commerce"),
                 ServerType::Platform if is_prod => ("docker-compose.prod.yml", "/srv/sitehaus"),
                 ServerType::Platform => ("docker-compose.staging.yml", "/srv/sitehaus"),
             };
@@ -192,15 +202,9 @@ pub fn run(cmd: &OpsCommand, server_override: Option<&str>) -> Result<()> {
             println!("Deploying to {}...", theme::yellow(name));
             let cmd = match server.server_type {
                 ServerType::Ecom => ecom_deploy_command(is_prod),
-                ServerType::Platform => {
-                    "cd /srv/sitehaus && \
-                     git pull origin main && \
-                     docker compose -f docker-compose.staging.yml pull && \
-                     docker compose -f docker-compose.staging.yml up -d --remove-orphans && \
-                     docker image prune -f"
-                }
+                ServerType::Platform => platform_deploy_command(is_prod),
             };
-            let code = ssh_exec(server, cmd);
+            let code = ssh_exec(server, &cmd);
             std::process::exit(code);
         }
     }
@@ -213,16 +217,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ecom_staging_deploy_pins_the_staging_image_tag() {
-        // Regression: without this export, `pull`/`up -d` on a staging box
-        // resolves ${IMAGE_TAG:-latest} and silently deploys production images.
-        let cmd = ecom_deploy_command(false);
-        assert!(cmd.contains("export IMAGE_TAG=staging"), "got: {cmd}");
+    fn ecom_deploy_uses_the_environment_specific_compose_file() {
+        let staging = ecom_deploy_command(false);
+        assert!(staging.contains("docker-compose.staging.yml"), "got: {staging}");
+        assert!(!staging.contains("docker-compose.prod.yml"), "got: {staging}");
+
+        let prod = ecom_deploy_command(true);
+        assert!(prod.contains("docker-compose.prod.yml"), "got: {prod}");
+        assert!(!prod.contains("docker-compose.staging.yml"), "got: {prod}");
     }
 
     #[test]
-    fn ecom_prod_deploy_leaves_image_tag_unset() {
-        let cmd = ecom_deploy_command(true);
-        assert!(!cmd.contains("IMAGE_TAG"), "expected no IMAGE_TAG override on prod, got: {cmd}");
+    fn platform_deploy_uses_the_environment_specific_compose_file() {
+        // Regression: this used to always run docker-compose.staging.yml,
+        // even with is_prod: true — `sitehaus deploy --server sitehaus-prod`
+        // would deploy staging's compose file onto production containers.
+        let staging = platform_deploy_command(false);
+        assert!(staging.contains("docker-compose.staging.yml"), "got: {staging}");
+        assert!(!staging.contains("docker-compose.prod.yml"), "got: {staging}");
+
+        let prod = platform_deploy_command(true);
+        assert!(prod.contains("docker-compose.prod.yml"), "got: {prod}");
+        assert!(!prod.contains("docker-compose.staging.yml"), "got: {prod}");
     }
 }
