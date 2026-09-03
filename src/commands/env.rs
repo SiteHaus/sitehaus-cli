@@ -102,11 +102,19 @@ fn targets_for_key<'a>(key: &str, server_type: &ServerType, is_prod: bool) -> Ve
         ServerType::Ecom => {
             let compose_file = if is_prod { ECOM_COMPOSE_PROD } else { ECOM_COMPOSE_STAGING };
             match key {
-            "STRIPE_SECRET_KEY" | "STRIPE_WEBHOOK_SECRET" => vec![
+            "STRIPE_SECRET_KEY" | "STRIPE_WEBHOOK_SECRET"
+            // payments calls apps/api (API_URL) with a shared secret
+            // (COMMERCE_SERVICE_KEY) that apps/api's ServiceKeyGuard verifies —
+            // see postage-billing.service.ts. Must match whatever's set on the
+            // Platform side for the same key.
+            | "API_URL" | "COMMERCE_SERVICE_KEY" => vec![
                 ServiceTarget { label: "payments", env_file: "/srv/sitehaus-commerce/apps/payments/.env", container: PAY, compose_file },
             ],
             "R2_ACCESS_KEY_ID" | "R2_SECRET_ACCESS_KEY" | "R2_BUCKET_NAME"
-            | "R2_CDN_URL" | "R2_ACCOUNT_ID" => vec![
+            | "R2_CDN_URL" | "R2_ACCOUNT_ID"
+            // Platform-level key for EasyPost child-account provisioning and
+            // label purchase — see apps/commerce/src/shipping/easypost.service.ts.
+            | "EASYPOST_API_KEY" => vec![
                 ServiceTarget { label: "commerce", env_file: "/srv/sitehaus-commerce/apps/commerce/.env", container: COM, compose_file },
             ],
             // EMAIL_FROM and RESEND_API_KEY are consumed by both commerce and worker
@@ -116,6 +124,15 @@ fn targets_for_key<'a>(key: &str, server_type: &ServerType, is_prod: bool) -> Ve
             ],
             "EMAIL_DEV_REDIRECT" => vec![
                 ServiceTarget { label: "worker", env_file: "/srv/sitehaus-commerce/apps/worker/.env", container: "sitehaus-commerce-worker-1", compose_file },
+            ],
+            // TCP hostname both gateway and worker use to reach the payments
+            // microservice (billing checks, and the shipping-street lookup
+            // the worker needs for order emails). Defaults to "localhost" in
+            // code, which is unreachable inside Docker — every service that
+            // never got this set silently fails every payments RPC call.
+            "PAYMENTS_HOST" => vec![
+                ServiceTarget { label: "gateway", env_file: "/srv/sitehaus-commerce/apps/gateway/.env", container: GW, compose_file },
+                ServiceTarget { label: "worker",  env_file: "/srv/sitehaus-commerce/apps/worker/.env",  container: "sitehaus-commerce-worker-1", compose_file },
             ],
             // Everything else (IAM_URL, IAM_CLIENT_KEY, SESSION_SECRET, DATABASE_URL, REDIS_URL, PORT, …) → gateway
             _ => vec![
@@ -460,6 +477,29 @@ mod tests {
         assert_eq!(staging[0].compose_file, ECOM_COMPOSE_STAGING);
 
         assert_ne!(prod[0].compose_file, staging[0].compose_file);
+    }
+
+    #[test]
+    fn ecom_easypost_key_targets_commerce() {
+        let targets = targets_for_key("EASYPOST_API_KEY", &ServerType::Ecom, false);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].label, "commerce");
+    }
+
+    #[test]
+    fn ecom_payments_shared_secrets_target_payments() {
+        for key in ["API_URL", "COMMERCE_SERVICE_KEY"] {
+            let targets = targets_for_key(key, &ServerType::Ecom, false);
+            assert_eq!(targets.len(), 1, "key {key}");
+            assert_eq!(targets[0].label, "payments", "key {key}");
+        }
+    }
+
+    #[test]
+    fn ecom_payments_host_targets_both_gateway_and_worker() {
+        let targets = targets_for_key("PAYMENTS_HOST", &ServerType::Ecom, false);
+        let labels: Vec<&str> = targets.iter().map(|t| t.label).collect();
+        assert_eq!(labels, vec!["gateway", "worker"]);
     }
 
     #[test]
